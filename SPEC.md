@@ -95,11 +95,20 @@ estimator of the Shapley value. It is seeded, so a given query is reproducible.
 Naively, sampling `m` permutations over `n` records costs `m·n` model calls. Two things cut it:
 
 - **Coalition memoisation.** `v(S)` depends only on the *set* `S`, not on the permutation that
-  produced it. Results are cached on `frozenset(record_ids)`. With `n` bounded by the retrieval
-  limit (default 8), the number of *distinct* coalitions reachable is at most `2ⁿ = 256`, so the
-  cache saturates quickly and sampling more permutations becomes nearly free.
-- **A bounded player set.** Retrieval returns at most `max_sources` records. Beyond that bound the
-  cost is controlled by capping players, not by degrading the estimator.
+  produced it. Results are cached on `frozenset(record_ids)`. The number of *distinct* coalitions
+  reachable is at most `2ⁿ`, so the cache saturates and sampling more permutations becomes nearly
+  free.
+- **A bounded player set.** Retrieval returns at most `max_sources` records — **6** by default,
+  which caps a live query at 64 generations. `n` is the only real lever on cost; the estimator is
+  not where savings come from.
+
+That second point cuts the other way too, and the implementation says so rather than pretending
+sampling is a free win. **Once sampling has visited most of the coalition space, it has paid for the
+whole space anyway** — at small `n`, `exact_shapley` costs about the same and has no variance.
+Sampling earns its place when the permutation count is deliberately held below saturation, or when
+`n` is too large for `2ⁿ`. The permutation default is correspondingly high (2000), because below
+saturation the marginal permutation costs a dictionary lookup rather than a model call, and
+sampling sparsely bought nothing but noise.
 
 The cost is real and the README states it plainly rather than hiding it. `loo` remains available as
 the cheap engine, documented with the defect above, because showing the two side by side is more
@@ -113,8 +122,18 @@ useful than shipping only the right one.
 from all of `N`:
 
 ```
-v(S) = similarity( answer(S), answer(N) )      with  v(∅) := 0
+v(S) = ( similarity(answer(S), answer(N)) − floor ) / ( 1 − floor )     with  v(∅) := 0
+where   floor = similarity( answer(∅), answer(N) )
 ```
+
+**The `floor` term is load-bearing, and it was not in the first draft of this design.** Every answer
+shares boilerplate with every other — "the records show…" against "the records do not support an
+answer" — and that shared vocabulary puts a constant, non-zero floor under the raw similarity. It is
+not evidence that anything contributed. Without subtracting it, a source that changes nothing scores
+well above zero and inherits the boilerplate as earnings, which breaks the null-player property that
+makes the whole allocation meaningful. Rescaling against the no-source answer costs one extra
+generation per query and restores `v(∅) = 0`, `v(N) = 1` exactly. The null-player test is what caught
+this.
 
 `similarity` is a pluggable protocol so the choice is not baked in:
 
@@ -196,24 +215,35 @@ src/datagraph/
   money.py          Credits, largest-remainder allocation
   ledger.py         double-entry accounts, escrow, invariant assertions
   policy.py         DisclosurePolicy, field redaction, cohort floor
-  registry.py       providers, datasets, records
-  retrieval.py      question -> candidate records (bounded)
+  registry.py       providers, datasets, records, retrieval, SQLite persistence
   models.py         ModelClient protocol; AnthropicModel; deterministic FakeModel
-  similarity.py     Similarity protocol; TokenF1; embedding-backed
-  attribution/
-    base.py         AttributionEngine protocol, Attribution result
-    loo.py          leave-one-out
-    shapley.py      Monte-Carlo permutation sampling, memoised
+  attribution.py    Similarity, v(S), and both engines
   marketplace.py    orchestration: escrow -> retrieve -> redact -> answer -> attribute -> settle
-  store.py          SQLite persistence
-  cli.py            demo and individual operations
+  sample_data.py    synthetic demo data
+  text.py           shared tokenisation
+  cli.py            demo, compare, providers
 ```
 
+Two things collapsed relative to the first draft of this plan, both in the direction of less
+structure. Retrieval lives in `registry.py`, because it is a query against the store and pretending
+otherwise added a module without adding a concept. **Both attribution engines live in one file**,
+because the contrast between them is the lesson — splitting them across `loo.py` and `shapley.py`
+would hide the one thing a reader should see side by side.
+
 **Storage** is SQLite through the standard library — no service to run, so the quickstart is one
-command. **Generation** is the Anthropic API; `FakeModel` is a deterministic stand-in that composes
-answers from the facts present in its sources, which makes leave-one-out and Shapley produce
-*meaningful, assertable* differences offline. The offline suite therefore tests the real attribution
-code rather than mocking past it.
+command. There is deliberately **no Docker**: with a local database and a hosted API there is
+nothing to orchestrate, and a compose file would be ceremony that makes the project look harder to
+run than it is.
+
+**Generation** is the Anthropic API (`claude-opus-5`); `FakeModel` is a deterministic stand-in that
+composes answers from the facts present in its sources, which makes leave-one-out and Shapley
+produce *meaningful, assertable* differences offline. The offline suite therefore tests the real
+attribution code rather than mocking past it.
+
+Answers are generated with thinking disabled at low effort. The task is short extractive work
+repeated up to `2^n` times per query, so depth buys nothing and costs a great deal. Requests opt
+into server-side refusal fallbacks by default, and fall back to a plain request once if that beta
+is not available to the caller's organisation.
 
 ---
 
@@ -247,5 +277,24 @@ attribution problem concrete.
 | Money type | Integer credits | Float division is how the reference lost money |
 | Weight → payout | Largest remainder | Only method here that guarantees exact exhaustion |
 | Storage | SQLite, stdlib | One-command quickstart beats a more "correct" service dependency |
+| Containers | None | Nothing to orchestrate; a compose file would only make it look harder to run |
+| Module layout | Both engines in one file | The contrast is the lesson and belongs on one screen |
+| `v(S)` calibration | Rescale against the no-source answer | Otherwise shared boilerplate is paid out as contribution |
+| Model settings | Thinking off, effort low | Short extractive work repeated up to 2ⁿ times; depth buys nothing |
 | Language | Python | The audience reads Python; the attribution logic is the point and must be legible |
 | Privacy claim | Application-enforced, stated as such | Overclaiming here is the specific dishonesty this design is reacting to |
+
+### Where the build changed the plan
+
+Three things in this document were revised *after* being tested rather than before, and are called
+out because the reasoning is more useful than the conclusion:
+
+1. **The `v(S)` floor** (§3) — added because the null-player test failed. Shared boilerplate was
+   being paid out as contribution.
+2. **Permutation count and source cap** (§2.3) — the first draft sampled sparsely to save money.
+   Memoisation means it was saving nothing and paying for it in variance.
+3. **What leave-one-out actually does on redundant data** (§2.1) — the expectation was that it would
+   collapse loudly, all weights zero, and force a refund. On realistic data it does something worse:
+   it zeroes only the corroborated providers and normalisation silently reassigns their credits to
+   whoever happened to be unique. The integration test asserts the quiet failure, because that is
+   the one a marketplace would actually ship.
