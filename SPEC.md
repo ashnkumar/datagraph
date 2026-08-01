@@ -1,0 +1,251 @@
+# datagraph — specification
+
+A data marketplace where per-use compensation is **measured**, not assumed.
+
+A provider publishes a dataset under a disclosure policy. A researcher escrows a payment and asks a
+question in natural language. The system retrieves candidate records, redacts each one to the
+projection its policy permits, and has a model answer from what survives redaction. It then measures
+how much each provider's records actually **changed that answer**, and settles the escrow in
+proportion to measured contribution.
+
+The interesting part is the measurement, and the fact that the payout is an *allocation* with
+provable properties rather than a heuristic ranking.
+
+---
+
+## 1. What this is not
+
+It is worth being blunt about the failure mode this design exists to avoid.
+
+The easy version of this project is a CRUD app: providers table, datasets table, a query endpoint
+that returns matching rows, and a payout that splits the fee evenly across whoever got returned.
+That version has no reason to exist. Splitting a fee across retrieved rows is not attribution — it
+rewards being *retrieved*, which is a property of the search index, not of whether the data was
+useful.
+
+Everything below follows from taking the measurement seriously.
+
+---
+
+## 2. The core problem: payout is a cooperative game
+
+A researcher pays `P` credits for one answer. That answer was synthesised from `n` records
+belonging to some set of providers. How much does each provider get?
+
+This is not a ranking problem. It is a **cost-allocation problem**, and it has a well-developed
+theory. Frame it as a cooperative game:
+
+- **Players** — the records that reached the model.
+- **Characteristic function** `v(S)` — the value of the answer obtainable from the subset `S ⊆ N`,
+  scored against the answer obtainable from all of `N`. By construction `v(∅) = 0` and `v(N) = 1`.
+- **Payout** — each player's share of `v(N)`, scaled to `P` credits.
+
+Two engines are implemented against this frame.
+
+### 2.1 Leave-one-out (`loo`)
+
+The intuitive one, and the one most implementations reach for:
+
+```
+φᵢ = v(N) − v(N \ {i})
+```
+
+"How much worse is the answer without you?" One regeneration per record, so `n + 1` model calls.
+
+**It is not an efficient allocation.** `Σφᵢ ≠ v(N)` in general, which means the payouts do not
+exhaust the payment, and the shortfall or excess has to be papered over by normalising — dividing by
+`Σφᵢ`.
+
+The failure is not academic. It is the **redundancy case**, and it is the common case in a data
+marketplace, because marketplaces accumulate providers with overlapping data:
+
+> Two providers each supply the same fact. Remove either one and the answer is unchanged, because the
+> other still supplies it. So `φ₁ = φ₂ = 0`. Both providers earn nothing, despite the answer
+> depending entirely on a fact only they supplied. If *every* record is redundant, `Σφᵢ = 0` and the
+> normalisation divides by zero.
+
+A marketplace that pays by leave-one-out systematically underpays exactly the providers whose data
+is well-corroborated, and it loses money into a rounding gap it cannot account for.
+
+### 2.2 Shapley value (`shapley`, the default)
+
+The Shapley value is the unique allocation satisfying **efficiency** (payouts sum exactly to the
+value being divided), **symmetry** (identical contributors are paid identically), **null player**
+(a record that never changes any answer earns exactly zero), and **additivity**:
+
+```
+φᵢ = Σ_{S ⊆ N\{i}}  [ |S|! (n−|S|−1)! / n! ] · ( v(S ∪ {i}) − v(S) )
+```
+
+Equivalently, and this is the form implemented: the expected marginal contribution of `i` over a
+uniformly random arrival order.
+
+Efficiency is not a nicety here — it is the property that makes settlement sound. Because
+`Σφᵢ = v(N)` exactly, the escrow is exhausted with no normalisation fudge, and the redundancy case
+resolves correctly: two providers supplying the same indispensable fact split its credit, rather
+than both being zeroed.
+
+Exact computation is `2ⁿ` coalitions. The implementation uses **Monte-Carlo permutation sampling**
+(Castro, Gómez & Tejada 2009, *Computers & Operations Research* 36(5), 1726–1730): sample random
+permutations, walk each one accumulating marginal contributions, average. This is an unbiased
+estimator of the Shapley value. It is seeded, so a given query is reproducible.
+
+### 2.3 Making it affordable
+
+Naively, sampling `m` permutations over `n` records costs `m·n` model calls. Two things cut it:
+
+- **Coalition memoisation.** `v(S)` depends only on the *set* `S`, not on the permutation that
+  produced it. Results are cached on `frozenset(record_ids)`. With `n` bounded by the retrieval
+  limit (default 8), the number of *distinct* coalitions reachable is at most `2ⁿ = 256`, so the
+  cache saturates quickly and sampling more permutations becomes nearly free.
+- **A bounded player set.** Retrieval returns at most `max_sources` records. Beyond that bound the
+  cost is controlled by capping players, not by degrading the estimator.
+
+The cost is real and the README states it plainly rather than hiding it. `loo` remains available as
+the cheap engine, documented with the defect above, because showing the two side by side is more
+useful than shipping only the right one.
+
+---
+
+## 3. Scoring an answer: `v(S)`
+
+`v(S)` regenerates an answer from the subset `S` and scores it against the reference answer built
+from all of `N`:
+
+```
+v(S) = similarity( answer(S), answer(N) )      with  v(∅) := 0
+```
+
+`similarity` is a pluggable protocol so the choice is not baked in:
+
+- **`TokenF1`** (default) — F1 over content-word token sets, stopworded and case-folded.
+  Deterministic, dependency-free, and computable offline, which is what lets the entire test suite
+  exercise the *real* attribution path with no API key.
+- **Embedding-backed cosine** — available when an API key is present, for semantic rather than
+  lexical agreement.
+
+This is a deliberate, stated limitation. Lexical F1 measures whether the same content survived, not
+whether the *meaning* did. It is adequate for the extractive question-answering this system does —
+answers are grounded in retrieved records, so contribution shows up as content appearing or
+disappearing — and it is honest about being a proxy. The interface exists so a reader can swap in
+something better without touching the attribution engines.
+
+---
+
+## 4. Privacy gating
+
+The reference implementation for this idea hashed sensitive rows, stored the hash on-chain, and
+wrote the plaintext to an ordinary database. That is a commitment scheme, not a privacy mechanism —
+anyone with database access reads everything. This design does not repeat that, and does not claim
+more than it does.
+
+Each dataset carries a **`DisclosurePolicy`** assigning every field one of:
+
+| Level | Meaning |
+| --- | --- |
+| `OPEN` | may be exposed verbatim |
+| `DERIVED` | may be exposed only coarsened — numeric values bucketed into bands, dates truncated to month |
+| `HIDDEN` | never leaves the provider's record under any query |
+
+Two rules enforce it:
+
+1. **Redaction precedes generation.** Records are projected through their policy *before* they are
+   assembled into a prompt. A `HIDDEN` field is absent from the object the prompt builder receives,
+   so no prompt can contain it and no model output can leak it. This is a structural guarantee about
+   the data path, not a request to the model to behave.
+2. **Cohort floor.** A query whose redacted result set spans fewer than `k` distinct providers
+   (default `k = 3`) is refused before any generation happens. Without this, a researcher narrows a
+   query until it resolves to one person and reads that person's record out of the answer.
+
+**What this is and is not.** These are enforced *by the application*, in process, by a trusted
+operator. Nothing here is cryptographic. An operator with database access reads raw records; a
+compromised process bypasses redaction. Real guarantees would need the raw data never to reach this
+tier at all — trusted execution, secure aggregation, or local differential privacy on the provider
+side. That is out of scope, and the README says so in those words rather than implying otherwise.
+
+---
+
+## 5. Money
+
+All amounts are integer **credits** (minor units). There are no floating-point values anywhere in
+the money path. Attribution weights are real-valued; the conversion to integer payouts is where
+exactness is enforced.
+
+- **Escrow.** A query deposits `P` credits into escrow before retrieval. Settlement releases them.
+  A refused query (cohort floor, no results) refunds in full. Escrow is never partially stranded.
+- **Double-entry.** Every movement is a balanced set of postings; the ledger asserts that debits
+  equal credits on every write.
+- **Largest-remainder allocation.** Real-valued weights become integer payouts by Hamilton's
+  method: floor each share, then distribute the remaining credits to the largest fractional
+  remainders, ties broken deterministically by record id. This guarantees `Σ payouts == P` exactly —
+  no credits created, none lost to rounding.
+
+Invariants, asserted as property-based tests:
+
+- Total credits in the system are conserved across any sequence of operations.
+- No account goes negative.
+- Every escrow reaches a terminal state — fully settled or fully refunded.
+- `Σ payouts == escrowed amount`, for any weight vector including all-zero.
+
+---
+
+## 6. Components
+
+```
+src/datagraph/
+  money.py          Credits, largest-remainder allocation
+  ledger.py         double-entry accounts, escrow, invariant assertions
+  policy.py         DisclosurePolicy, field redaction, cohort floor
+  registry.py       providers, datasets, records
+  retrieval.py      question -> candidate records (bounded)
+  models.py         ModelClient protocol; AnthropicModel; deterministic FakeModel
+  similarity.py     Similarity protocol; TokenF1; embedding-backed
+  attribution/
+    base.py         AttributionEngine protocol, Attribution result
+    loo.py          leave-one-out
+    shapley.py      Monte-Carlo permutation sampling, memoised
+  marketplace.py    orchestration: escrow -> retrieve -> redact -> answer -> attribute -> settle
+  store.py          SQLite persistence
+  cli.py            demo and individual operations
+```
+
+**Storage** is SQLite through the standard library — no service to run, so the quickstart is one
+command. **Generation** is the Anthropic API; `FakeModel` is a deterministic stand-in that composes
+answers from the facts present in its sources, which makes leave-one-out and Shapley produce
+*meaningful, assertable* differences offline. The offline suite therefore tests the real attribution
+code rather than mocking past it.
+
+---
+
+## 7. What the reference contributed
+
+The reference implementation (`ashnkumar/ai-datagraph`, Scala/Tessellation, 2024) contributed the
+**idea** and nothing else that survives, which a feasibility review established in detail:
+
+- Its on-chain attribution state (`rewardsToDistribute`, `dataUsageTracking`) was declared and never
+  written to by any code path.
+- Its off-chain payout endpoint divided each payment by the count of joined rows across *all*
+  unprocessed queries, never referenced the usage counter it maintained, and contained a SQL
+  predicate (`jsonb @> json`) that is not a valid Postgres expression — so it raised on its first
+  statement and had never executed.
+- Its "privacy gating" was a range-check validator over health metrics.
+
+So this is not a port. It is a build of the idea the reference described but did not implement. The
+one thing carried across deliberately is the **domain shape** — providers with periodic records,
+researchers paying per query, payout proportional to use — because that shape is what makes the
+attribution problem concrete.
+
+---
+
+## 8. Decisions recorded
+
+| Decision | Choice | Why |
+| --- | --- | --- |
+| Attribution default | Shapley (sampled) | Efficiency and null-player are what make settlement sound; LOO has neither |
+| LOO retained | Yes, as an option | The contrast is the most instructive thing in the repo |
+| `v(S)` similarity | Pluggable; lexical F1 default | Lets the real attribution path run offline and be tested |
+| Money type | Integer credits | Float division is how the reference lost money |
+| Weight → payout | Largest remainder | Only method here that guarantees exact exhaustion |
+| Storage | SQLite, stdlib | One-command quickstart beats a more "correct" service dependency |
+| Language | Python | The audience reads Python; the attribution logic is the point and must be legible |
+| Privacy claim | Application-enforced, stated as such | Overclaiming here is the specific dishonesty this design is reacting to |
