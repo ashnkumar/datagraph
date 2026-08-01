@@ -1,0 +1,217 @@
+"""The whole loop: escrow, retrieve, redact, answer, attribute, settle.
+
+The ordering matters and is deliberate. Payment is escrowed before any work happens, the
+cohort floor is checked before the model is ever called, and settlement happens only after
+attribution has produced weights that exhaust the payment. Every path out of
+:meth:`Marketplace.query` either settles the escrow or refunds it in full.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+
+from datagraph.attribution import Attribution, CoalitionValue, Similarity, TokenF1, attribute
+from datagraph.ledger import Ledger
+from datagraph.models import ModelClient, ModelRefusal
+from datagraph.money import allocate
+from datagraph.policy import DEFAULT_COHORT_FLOOR, CohortTooSmall, enforce_cohort_floor
+from datagraph.registry import Record, Registry, provider_ids
+
+__all__ = ["DEFAULT_MAX_SOURCES", "Marketplace", "QueryResult"]
+
+#: Cap on records used to answer one query. This bounds the attribution player set, and so
+#: the coalition space: measuring contribution honestly costs up to 2^n model calls, and n is
+#: the only lever on that. Six keeps a live query under 64 generations.
+DEFAULT_MAX_SOURCES = 6
+
+
+@dataclass(frozen=True)
+class QueryResult:
+    """Everything one query produced, including how it was paid for."""
+
+    query_id: str
+    question: str
+    answer: str
+    sources: Sequence[Record]
+    payouts: Mapping[str, int]
+    """Provider id -> credits earned. Sums to the payment unless the query was refunded."""
+
+    attribution: Attribution | None = None
+    source_weights: Mapping[str, float] = field(default_factory=dict)
+    model_calls: int = 0
+    refunded: bool = False
+    refund_reason: str | None = None
+
+    @property
+    def total_paid(self) -> int:
+        return sum(self.payouts.values())
+
+
+def account(kind: str, entity_id: str) -> str:
+    return f"{kind}:{entity_id}"
+
+
+class Marketplace:
+    """Runs queries against a registry, paying providers by measured contribution.
+
+    Args:
+        registry: Where providers, datasets, and records live.
+        ledger: Where credits move.
+        model: Answer generator.
+        engine: ``"shapley"`` (default), ``"exact_shapley"``, or ``"leave_one_out"``.
+        similarity: How answers are compared. Defaults to :class:`~datagraph.attribution.TokenF1`.
+        cohort_floor: Minimum distinct providers behind an answer.
+        max_sources: Cap on records used per query.
+        permutations: Sample size for the Shapley estimator.
+        seed: Seed for the Shapley estimator, so a query is reproducible.
+    """
+
+    def __init__(
+        self,
+        registry: Registry,
+        ledger: Ledger,
+        model: ModelClient,
+        engine: str = "shapley",
+        similarity: Similarity | None = None,
+        cohort_floor: int = DEFAULT_COHORT_FLOOR,
+        max_sources: int = DEFAULT_MAX_SOURCES,
+        permutations: int = 2000,
+        seed: int = 0,
+    ) -> None:
+        self.registry = registry
+        self.ledger = ledger
+        self.model = model
+        self.engine = engine
+        self.similarity = similarity or TokenF1()
+        self.cohort_floor = cohort_floor
+        self.max_sources = max_sources
+        self.permutations = permutations
+        self.seed = seed
+        self._query_seq = 0
+
+    def fund_researcher(self, researcher_id: str, credits: int) -> None:
+        self.ledger.fund(account("researcher", researcher_id), credits)
+
+    def balance_of(self, kind: str, entity_id: str) -> int:
+        return self.ledger.balance(account(kind, entity_id))
+
+    def query(self, researcher_id: str, question: str, payment: int) -> QueryResult:
+        """Answer ``question`` and pay the providers whose records shaped the answer.
+
+        The escrow is opened first, so the payment is committed before any work is done and a
+        failure part-way through cannot leave the researcher charged for nothing. Every exit
+        path settles or refunds.
+        """
+        self._query_seq += 1
+        query_id = f"q{self._query_seq}"
+        escrow = account("escrow", query_id)
+        researcher = account("researcher", researcher_id)
+
+        self.ledger.open_escrow(escrow, researcher, payment)
+
+        sources = self.registry.search(question, limit=self.max_sources)
+
+        try:
+            enforce_cohort_floor(provider_ids(sources), self.cohort_floor)
+        except CohortTooSmall as exc:
+            return self._refund(query_id, question, escrow, researcher, sources, str(exc))
+
+        value = CoalitionValue(
+            question=question,
+            sources=sources,
+            model=self.model,
+            similarity=self.similarity,
+        )
+
+        try:
+            answer = value.reference_answer
+            result = attribute(self.engine, value.players, value, **self._engine_kwargs())
+        except ModelRefusal as exc:
+            return self._refund(query_id, question, escrow, researcher, sources, str(exc))
+
+        weights = result.clamped()
+        by_provider = self._aggregate(sources, weights)
+
+        # Nothing measurably contributed. Paying anyway would mean paying for retrieval rather
+        # than for contribution, which is the failure this project exists to avoid — so the
+        # researcher gets their credits back instead.
+        if sum(by_provider.values()) <= 0:
+            return self._refund(
+                query_id,
+                question,
+                escrow,
+                researcher,
+                sources,
+                f"{self.engine} attributed no contribution to any provider",
+                attribution=result,
+                answer=answer,
+                model_calls=value.calls,
+            )
+
+        recipients = sorted(by_provider)
+        shares = allocate(payment, [by_provider[p] for p in recipients])
+        payouts = dict(zip(recipients, shares, strict=True))
+
+        self.ledger.settle_escrow(
+            escrow, {account("provider", p): amount for p, amount in payouts.items()}
+        )
+        self.ledger.check_invariants()
+
+        return QueryResult(
+            query_id=query_id,
+            question=question,
+            answer=answer,
+            sources=sources,
+            payouts=payouts,
+            attribution=result,
+            source_weights=weights,
+            model_calls=value.calls,
+        )
+
+    # -- internals ----------------------------------------------------------------------
+
+    def _engine_kwargs(self) -> dict[str, object]:
+        if self.engine == "shapley":
+            return {"permutations": self.permutations, "seed": self.seed}
+        return {}
+
+    @staticmethod
+    def _aggregate(sources: Sequence[Record], weights: Mapping[str, float]) -> dict[str, float]:
+        """Roll per-record weights up to per-provider weights.
+
+        A provider may hold several of the retrieved records, and it is the provider who gets
+        paid. Summing is right here: the Shapley value is additive, so a provider's share of
+        the answer is the sum of their records' shares.
+        """
+        totals: defaultdict[str, float] = defaultdict(float)
+        for source in sources:
+            totals[source.provider_id] += weights.get(source.id, 0.0)
+        return dict(totals)
+
+    def _refund(
+        self,
+        query_id: str,
+        question: str,
+        escrow: str,
+        researcher: str,
+        sources: Sequence[Record],
+        reason: str,
+        attribution: Attribution | None = None,
+        answer: str = "",
+        model_calls: int = 0,
+    ) -> QueryResult:
+        self.ledger.refund_escrow(escrow, researcher)
+        self.ledger.check_invariants()
+        return QueryResult(
+            query_id=query_id,
+            question=question,
+            answer=answer,
+            sources=sources,
+            payouts={},
+            attribution=attribution,
+            model_calls=model_calls,
+            refunded=True,
+            refund_reason=reason,
+        )

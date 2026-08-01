@@ -224,7 +224,7 @@ def leave_one_out(players: Sequence[str], value: ValueFn) -> Attribution:
 def shapley(
     players: Sequence[str],
     value: ValueFn,
-    permutations: int = 64,
+    permutations: int = 2000,
     seed: int = 0,
 ) -> Attribution:
     """Monte-Carlo estimate of the Shapley value.
@@ -240,7 +240,17 @@ def shapley(
         players: Source ids.
         value: The characteristic function.
         permutations: Random orders to sample. More reduces variance between players.
+            The default is high because memoisation makes it nearly free: distinct coalitions
+            are bounded by 2^n, so past the point where the cache saturates, extra
+            permutations cost dictionary lookups rather than model calls.
         seed: Seed for the permutation sampler.
+
+    Note:
+        At small ``n`` that bound cuts both ways — once sampling has visited most of the
+        coalition space it has paid for the whole space anyway, and :func:`exact_shapley` costs
+        the same with no variance. Sampling is the right tool when you deliberately keep
+        ``permutations`` below saturation, or when ``n`` is large enough that 2^n is out of
+        reach.
     """
     if permutations < 1:
         raise ValueError(f"permutations must be at least 1, got {permutations}")
