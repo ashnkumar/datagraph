@@ -29,7 +29,7 @@ packages = ["src/datagraph"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --strict-markers"
+addopts = "-q --strict-markers -m 'not live'"
 markers = [
     "live: exercises the real Anthropic API; requires ANTHROPIC_API_KEY (deselected by default)",
 ]
