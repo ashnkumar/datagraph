@@ -247,23 +247,30 @@ is not available to the caller's organisation.
 
 ---
 
-## 7. What the reference contributed
+## 7. Failure modes this design is built against
 
-The reference implementation (`ashnkumar/ai-datagraph`, Scala/Tessellation, 2024) contributed the
-**idea** and nothing else that survives, which a feasibility review established in detail:
+Data marketplaces that promise per-use compensation tend to share the same three gaps, and each one
+here is a direct response.
 
-- Its on-chain attribution state (`rewardsToDistribute`, `dataUsageTracking`) was declared and never
-  written to by any code path.
-- Its off-chain payout endpoint divided each payment by the count of joined rows across *all*
-  unprocessed queries, never referenced the usage counter it maintained, and contained a SQL
-  predicate (`jsonb @> json`) that is not a valid Postgres expression — so it raised on its first
-  statement and had never executed.
-- Its "privacy gating" was a range-check validator over health metrics.
+**Attribution declared but not computed.** It is easy to design a schema with a
+`contribution_by_provider` table and never write the code that populates it — the API looks
+complete, the payout path reads plausibly, and the numbers are always zero or uniform. The guard is
+that attribution here has properties that are *asserted*, not just documented: efficiency, symmetry,
+and null-player are tested against closed-form games, so a stubbed engine fails the suite.
 
-So this is not a port. It is a build of the idea the reference described but did not implement. The
-one thing carried across deliberately is the **domain shape** — providers with periodic records,
-researchers paying per query, payout proportional to use — because that shape is what makes the
-attribution problem concrete.
+**Payouts that don't reconcile.** Splitting a payment with floating-point division and rounding for
+display loses money on every query, invisibly. Integer credits plus largest-remainder apportionment
+make the shares sum exactly, and the ledger *refuses* a settlement that doesn't exhaust its escrow,
+so an attribution bug surfaces as a loud failure rather than a slow leak.
+
+**Privacy claimed by hashing.** Storing a hash alongside the plaintext is a commitment scheme, not a
+privacy mechanism — anyone with database access still reads everything. Redaction here is structural
+(the suppressed value is never placed in the object a prompt is built from), and the README states
+plainly that this is application-enforced and not cryptographic, rather than implying more.
+
+The **domain shape** — providers with periodic records, researchers paying per query, payout
+proportional to use — is kept because it makes the attribution problem concrete rather than
+abstract.
 
 ---
 

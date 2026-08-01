@@ -144,13 +144,17 @@ def cmd_demo(args: argparse.Namespace, console: Console) -> int:
 
 def cmd_compare(args: argparse.Namespace, console: Console) -> int:
     """Run the same query under each engine and show where they disagree."""
+    if args.live:
+        console.print(
+            f"[yellow]--live runs the query {len(ENGINES)} times, once per engine. "
+            f"Each run costs up to 2^n generations.[/yellow]"
+        )
+
     results: dict[str, QueryResult] = {}
-    market = None
     for engine in ENGINES:
         market = _market(engine, args.live, console)
         results[engine] = market.query(RESEARCHER, args.question, args.payment)
 
-    assert market is not None
     console.print(Panel(args.question, title="Question", border_style="blue"))
 
     table = Table(title="Payout by attribution engine (credits)", expand=True)
