@@ -31,12 +31,12 @@ uv run datagraph compare
 ┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
 ┃ provider             ┃     shapley ┃      exact_shapley ┃      leave_one_out ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
-│ aurora               │         214 │                214 │                305 │
-│ borealis             │         176 │                170 │                  0 │
-│ cascade              │         161 │                170 │                  0 │
-│ delta                │         449 │                446 │                695 │
+│ aurora               │         243 │                241 │                287 │
+│ borealis             │         195 │                197 │                  0 │
+│ cascade              │         203 │                197 │                  0 │
+│ delta                │         359 │                365 │                713 │
 ├──────────────────────┼─────────────┼────────────────────┼────────────────────┤
-│ weights sum to       │      1.0000 │             1.0000 │             0.2581 │
+│ weights sum to       │      1.0000 │             1.0000 │             0.2744 │
 └──────────────────────┴─────────────┴────────────────────┴────────────────────┘
 ```
 
@@ -55,9 +55,18 @@ uv run datagraph demo --live
 
 **Paying providers for one answer is a cost-allocation problem, not a ranking problem.**
 
-Frame it as a cooperative game: the *players* are the records that reached the model, the
-*characteristic function* `v(S)` is how much of the full answer is recoverable from a subset
-`S`, and the payout is each player's share of `v(N)`.
+Frame it as a cooperative game: the *players* are the **providers** whose records reached the
+model, the *characteristic function* `v(S)` is how much of the full answer is recoverable from
+a subset `S`, and the payout is each player's share of `v(N)`.
+
+Providers rather than records, and that distinction is load-bearing. **The Shapley value is not
+replication-proof.** If each record were its own player and a provider's payout were the sum of
+its records' shares, a provider could split one record into four identical copies and take a
+bigger cut for contributing nothing new — on this demo data that moved one provider from 200 to
+326 credits out of 600. Making the provider the player means duplicating a row changes neither
+the player set nor any coalition's content, so the payout depends on what you contribute rather
+than how you choose to slice it. It is also cheaper: the coalition space is `2^providers`, not
+`2^records`.
 
 The obvious engine is **leave-one-out** — "how much worse is the answer without you?" — and
 it is the one most implementations reach for. It is not an efficient allocation: the weights
@@ -110,7 +119,14 @@ Redaction runs *before* records are assembled into a prompt, so a hidden field i
 the object the prompt builder receives. Policies fail closed: an unlisted field is hidden, and
 a `DERIVED` value with no safe coarse form is dropped rather than passed through. A query
 whose results span fewer than `k` distinct providers is refused before generation, which
-blocks the obvious narrowing attack.
+blocks the obvious narrowing attack. Retrieval suppresses a provider's duplicate records and
+caps how many result slots any one provider can occupy, so padding a dataset cannot crowd
+others out and force a refusal.
+
+Raw values never cross the registry boundary. A query returns `SourceView` objects carrying the
+disclosed projection and the *names* of suppressed fields — never their values — so a caller
+holding a `QueryResult` has no route back to the data the policy removed, on the answered path
+or the refused one.
 
 **All of this is enforced by the application, in process, by a trusted operator. None of it is
 cryptographic.** An operator with database access reads raw records; a compromised process
@@ -131,9 +147,9 @@ money.
 These are real, and stated because the project is about measuring honestly.
 
 - **Cost.** Measuring contribution properly means regenerating the answer from many subsets.
-  With memoisation the bound is `2^n` model calls per query, where `n` is the number of
-  retrieved records — capped at 6 by default, so up to 64 generations for one answer. There is
-  no cheap version of this that is also correct.
+  With memoisation the bound is `2^n` model calls per query, where `n` is the number of distinct
+  *providers* among the retrieved records — at most 6 by default, so up to 64 generations for
+  one answer. There is no cheap version of this that is also correct.
 - **Sampling vs. exact.** At small `n`, memoised sampling ends up visiting most of the
   coalition space anyway, so `--engine exact_shapley` costs about the same and has no
   variance. Sampling is the right tool when you deliberately keep the permutation count below

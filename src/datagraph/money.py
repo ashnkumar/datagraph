@@ -13,6 +13,7 @@ float to represent money.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from fractions import Fraction
 
 __all__ = ["AllocationError", "allocate"]
 
@@ -60,18 +61,29 @@ def allocate(total: int, weights: Sequence[float]) -> list[int]:
             raise AllocationError(f"weight[{i}] must be non-negative and finite, got {w!r}")
 
     n = len(weights)
-    pool = float(sum(weights))
+
+    # Exact rational arithmetic, not floating point. Every float is exactly representable as a
+    # Fraction, so this loses nothing on input and cannot overflow or round on the way through.
+    # Floats were wrong here in two ways that only show up at the edges of the accepted range:
+    # a weight sum large enough to overflow to inf drove every share to zero, and a `total`
+    # beyond 2^53 lost integer precision, so the floors summed short by more than the recipient
+    # count and the largest-remainder pass could not make it up.
+    pool = sum((Fraction(w) for w in weights), Fraction(0))
 
     # All-zero weights split equally — the documented limit case; see the docstring for why
     # callers should decide the policy themselves rather than leaning on it.
-    shares = [1.0 / n] * n if pool == 0.0 else [w / pool for w in weights]
+    if pool == 0:
+        quotas = [Fraction(total, n)] * n
+    else:
+        quotas = [Fraction(total) * Fraction(w) / pool for w in weights]
 
-    exact = [total * s for s in shares]
-    floors = [int(x) for x in exact]
+    floors = [q.numerator // q.denominator for q in quotas]
     remainder = total - sum(floors)
 
     # Hand out the leftover credits to the largest fractional parts, ties broken by index.
-    order = sorted(range(n), key=lambda i: (-(exact[i] - floors[i]), i))
+    # With exact quotas each floor is within 1 of its quota, so 0 <= remainder < n and the
+    # slice below always covers the whole shortfall.
+    order = sorted(range(n), key=lambda i: (floors[i] - quotas[i], i))
     for i in order[:remainder]:
         floors[i] += 1
 

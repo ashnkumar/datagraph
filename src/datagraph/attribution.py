@@ -3,7 +3,9 @@
 Paying providers for one answer is a **cost-allocation problem**, not a ranking problem. Framed
 as a cooperative game:
 
-* the **players** are the records that reached the model,
+* the **players** are the providers whose records reached the model — providers rather than
+  records, because the Shapley value is not replication-proof and per-record players let a
+  provider inflate its cut by cloning a row (see :class:`CoalitionValue`),
 * the **characteristic function** ``v(S)`` is how much of the full answer is recoverable from
   the subset ``S``, normalised so ``v(∅) = 0`` and ``v(N) = 1``,
 * the **payout** is each player's share of ``v(N)``.
@@ -124,10 +126,23 @@ class TokenF1(Similarity):
 class CoalitionValue:
     """Builds ``v(S)`` by regenerating the answer from ``S`` and scoring it against ``v(N)``.
 
-    Memoised on the coalition itself, because ``v(S)`` depends only on the *set* — the same
-    subset reached by two different permutations costs one model call, not two. With the
-    player set bounded by retrieval, the cache saturates quickly and extra sampling becomes
-    nearly free.
+    **The players are providers, not records.** A coalition names a set of providers, and the
+    answer for that coalition is generated from *all* of their retrieved records at once. This
+    is not a detail — it is what stops the obvious attack.
+
+    The Shapley value is not replication-proof. If each record were its own player and a
+    provider's payout were the sum of their records' shares, a provider could split one record
+    into four identical copies and take a larger cut for contributing nothing new: measured on
+    the demo data, one provider went from 200 to 326 credits out of 600 by cloning a single
+    record four times. Grouping by provider makes the payout invariant to how a provider
+    happens to divide its data into rows, because duplicating a row changes neither the player
+    set nor any coalition's content.
+
+    It is also cheaper. The coalition space is ``2^providers`` rather than ``2^records``, and
+    providers are never more numerous than their records.
+
+    Memoised on the coalition, because ``v(S)`` depends only on the *set* — the same subset
+    reached by two different permutations costs one model call, not two.
     """
 
     question: str
@@ -142,7 +157,8 @@ class CoalitionValue:
 
     @property
     def players(self) -> list[str]:
-        return sorted(s.id for s in self.sources)
+        """The distinct providers behind the retrieved records."""
+        return sorted({s.provider_id for s in self.sources})
 
     @property
     def calls(self) -> int:
@@ -193,7 +209,9 @@ class CoalitionValue:
 
     def _generate(self, coalition: frozenset[str]) -> str:
         self._calls += 1
-        subset = [s for s in self.sources if s.id in coalition]
+        # Every record belonging to a provider in the coalition, so a provider is present or
+        # absent as a whole and cannot gain by splitting its data across more rows.
+        subset = [s for s in self.sources if s.provider_id in coalition]
         return self.model.answer(self.question, subset)
 
 

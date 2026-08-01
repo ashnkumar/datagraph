@@ -35,7 +35,12 @@ belonging to some set of providers. How much does each provider get?
 This is not a ranking problem. It is a **cost-allocation problem**, and it has a well-developed
 theory. Frame it as a cooperative game:
 
-- **Players** — the records that reached the model.
+- **Players** — the **providers** whose records reached the model. Providers, not records:
+  the Shapley value is not replication-proof, so per-record players let a provider inflate its
+  cut by splitting one record into several identical rows (measured: 200 → 326 credits out of
+  600 by cloning a row four times). A coalition names providers and is answered from all of
+  that provider's retrieved records at once, which makes the payout invariant to row count —
+  and shrinks the coalition space from `2^records` to `2^providers`.
 - **Characteristic function** `v(S)` — the value of the answer obtainable from the subset `S ⊆ N`,
   scored against the answer obtainable from all of `N`. By construction `v(∅) = 0` and `v(N) = 1`.
 - **Payout** — each player's share of `v(N)`, scaled to `P` credits.
@@ -288,6 +293,10 @@ abstract.
 | Module layout | Both engines in one file | The contrast is the lesson and belongs on one screen |
 | `v(S)` calibration | Rescale against the no-source answer | Otherwise shared boilerplate is paid out as contribution |
 | Model settings | Thinking off, effort low | Short extractive work repeated up to 2ⁿ times; depth buys nothing |
+| Attribution players | Providers, not records | Shapley is not replication-proof; per-record players are gameable by cloning |
+| Query boundary | Disclosure-only `SourceView` | "Raw values stay in the store" is only true if no object carrying them crosses the boundary |
+| Failure handling | Refund guard around the whole query | Any exception between escrow and settlement would otherwise debit the payer and strand the credits |
+| Apportionment arithmetic | Exact rationals | Floats silently lost credits at the edges of the accepted input range |
 | Language | Python | The audience reads Python; the attribution logic is the point and must be legible |
 | Privacy claim | Application-enforced, stated as such | Overclaiming here is the specific dishonesty this design is reacting to |
 
@@ -305,3 +314,24 @@ out because the reasoning is more useful than the conclusion:
    it zeroes only the corroborated providers and normalisation silently reassigns their credits to
    whoever happened to be unique. The integration test asserts the quiet failure, because that is
    the one a marketplace would actually ship.
+
+An adversarial review then found five more, all reproduced before being fixed, and the first two
+were design errors rather than slips:
+
+4. **Per-record players were gameable** (§2) — cloning a row raised a provider's take by 63% for no
+   new information. Players are providers now. The same attack then reappeared as a *crowd-out*:
+   cloned rows filled the retrieval cap and tripped the cohort floor, turning payout theft into a
+   denial of service, so retrieval also suppresses a provider's duplicates and caps its share of
+   the result slots.
+5. **`QueryResult` handed back raw records** — including on the cohort-floor refusal, where the
+   whole point was that the data was too narrow to expose. Redaction was careful about the *prompt*
+   and careless about the *return value*. One of my own tests asserted the leak was correct.
+6. **Only `ModelRefusal` was caught** — a timeout debited the researcher and left the credits in an
+   escrow nothing would settle. The whole query now runs under a refund guard, `BaseException`
+   included, because ctrl-C is exactly when you least want money stranded.
+7. **A rejected insert poisoned the store** — the row was committed before the projection that
+   validated it, so one non-finite value made every later read raise. Validation moved ahead of the
+   commit.
+8. **Float apportionment lost credits** — exact within the range the property test covered, wrong
+   outside it (`allocate(10**18, [1,2,3])` was 29 credits short). Rational arithmetic now, and the
+   property test runs to the contract rather than to the comfortable range.

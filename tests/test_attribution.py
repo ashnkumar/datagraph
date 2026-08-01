@@ -237,8 +237,15 @@ def test_token_f1_handles_empty_strings():
 
 @dataclass(frozen=True)
 class StubSource:
+    """A source with its own provider, so one stub is one player."""
+
     id: str
     body: str
+    provider_id: str = ""
+
+    def __post_init__(self) -> None:
+        # Default each stub to its own provider; tests that care about grouping set it.
+        object.__setattr__(self, "provider_id", self.provider_id or self.id)
 
     def render(self) -> str:
         return f"[{self.id}] {self.body}"

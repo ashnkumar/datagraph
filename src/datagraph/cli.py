@@ -59,11 +59,11 @@ def _sources_table(result: QueryResult) -> Table:
     table.add_column("disclosed to the model", style="green")
 
     for source in sorted(result.sources, key=lambda s: s.id):
-        hidden = sorted(set(source.values) - set(source.disclosed))
+        # Field *names* only — the view deliberately does not carry the removed values.
         table.add_row(
             source.id,
             source.provider_id,
-            ", ".join(hidden) or "—",
+            ", ".join(source.suppressed_fields) or "—",
             ", ".join(f"{k}={v}" for k, v in sorted(source.disclosed.items())),
         )
     return table
@@ -82,7 +82,7 @@ def _payout_table(result: QueryResult, market: Marketplace) -> Table:
         by_provider.setdefault(source.provider_id, []).append(source.id)
 
     for provider_id in sorted(by_provider):
-        share = sum(result.source_weights.get(r, 0.0) for r in by_provider[provider_id])
+        share = result.provider_weights.get(provider_id, 0.0)
         name = market.registry.get_provider(provider_id)
         table.add_row(
             f"{provider_id} ({name.name})" if name else provider_id,

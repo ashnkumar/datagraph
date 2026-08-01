@@ -52,9 +52,39 @@ def test_hidden_fields_never_reach_the_answer(market):
     assert "synthetic-participant" not in rendered
     assert "1992-02-29" not in rendered
 
-    # ...while the raw values are still in the store, which is the point of the distinction.
-    raw = {s.id: s.values for s in result.sources}
-    assert raw["rec-01"]["participant_ref"] == "synthetic-participant-0001"
+
+def test_the_query_result_carries_no_raw_values_at_all(market):
+    """The result object itself must not be a way around redaction.
+
+    An earlier version of this test asserted the opposite — that raw values were still
+    reachable through `result.sources[...].values` — on the reasoning that they belonged to
+    the store. They do, but a `QueryResult` is not the store: it is what a caller gets back,
+    and anything it carries has left the tier that is allowed to hold suppressed data.
+    """
+    result = market.query("rachel", DEMO_QUESTION, PAYMENT)
+
+    for source in result.sources:
+        assert not hasattr(source, "values")
+        assert "participant_ref" not in source.disclosed
+        assert "participant_ref" in source.suppressed_fields  # the name, never the value
+
+    # Nothing suppressed survives serialisation of the whole result either.
+    assert "synthetic-participant" not in repr(result)
+    assert "1992-02-29" not in repr(result)
+
+
+def test_a_refused_query_also_returns_no_raw_values(market):
+    """The refusal paths retrieve records before deciding not to answer from them.
+
+    A cohort-floor refusal that handed back raw records would leak exactly the data the floor
+    exists to protect — the narrow-cohort case is where the leak matters most.
+    """
+    result = market.query("rachel", "northern", PAYMENT)
+
+    assert result.sources  # records were retrieved
+    for source in result.sources:
+        assert not hasattr(source, "values")
+    assert "synthetic-participant" not in repr(result)
 
 
 def test_derived_fields_reach_the_model_only_as_bands(market):
@@ -87,7 +117,28 @@ def test_exact_shapley_pays_symmetric_providers_identically(market):
     # Largest-remainder allocation can differ by a single credit when a share is not a whole
     # number; the underlying weights are equal.
     assert abs(result.payouts["borealis"] - result.payouts["cascade"]) <= 1
-    assert result.source_weights["rec-02"] == pytest.approx(result.source_weights["rec-03"])
+    assert result.provider_weights["borealis"] == pytest.approx(result.provider_weights["cascade"])
+
+
+def test_a_provider_cannot_gain_by_splitting_its_data_across_more_records(market):
+    """Replication-proofness: payouts depend on what a provider contributes, not row count.
+
+    The Shapley value is not replication-proof over per-record players, so an earlier version
+    of this system could be gamed — cloning one record four times moved that provider from 200
+    to 326 credits out of 600 without contributing anything new. Players are providers now, so
+    the split is invariant.
+    """
+    baseline = market.query("rachel", DEMO_QUESTION, PAYMENT).payouts
+
+    # 'aurora' clones its single record four more times, same disclosed content.
+    original = next(r for r in market.registry.all_records() if r.id == "rec-01")
+    for i in range(4):
+        market.registry.add_record(f"rec-01-clone-{i}", "aurora-study", dict(original.values))
+
+    inflated = market.query("rachel", DEMO_QUESTION, PAYMENT).payouts
+
+    assert inflated["aurora"] <= baseline["aurora"] + 1
+    assert set(inflated) == set(baseline)
 
 
 def test_leave_one_out_pays_redundant_providers_nothing_and_reassigns_their_share(market):
@@ -175,6 +226,54 @@ def test_a_researcher_cannot_spend_credits_they_do_not_have(market):
 
     with pytest.raises(LedgerError, match="would overdraw"):
         market.query("rachel", DEMO_QUESTION, 500_000)
+
+
+@pytest.mark.parametrize(
+    "boom",
+    [TimeoutError("API timeout"), RuntimeError("rate limited"), KeyboardInterrupt()],
+)
+def test_an_unexpected_failure_refunds_rather_than_stranding_the_escrow(market, boom):
+    """Only ModelRefusal used to be caught, so anything else left the payer debited.
+
+    A timeout mid-query took the credits out of the researcher's account and left them sitting
+    in an escrow nothing would ever settle — and a retry would charge again. KeyboardInterrupt
+    is in the list because it does not inherit from Exception: an operator pressing ctrl-C is
+    exactly when you least want money stranded.
+    """
+
+    class Exploding:
+        def answer(self, question, sources):
+            raise boom
+
+    market.model = Exploding()
+    before = market.balance_of("researcher", "rachel")
+
+    with pytest.raises(type(boom)):
+        market.query("rachel", DEMO_QUESTION, PAYMENT)
+
+    assert market.balance_of("researcher", "rachel") == before
+    assert market.ledger.open_escrows() == {}
+    market.ledger.check_invariants()
+
+
+def test_a_settlement_failure_also_refunds(market):
+    """The guard has to cover apportionment and settlement, not just generation."""
+
+    def broken_allocate(*args, **kwargs):
+        raise ValueError("allocation blew up")
+
+    import datagraph.marketplace as mp
+
+    original, mp.allocate = mp.allocate, broken_allocate
+    try:
+        before = market.balance_of("researcher", "rachel")
+        with pytest.raises(ValueError, match="allocation blew up"):
+            market.query("rachel", DEMO_QUESTION, PAYMENT)
+
+        assert market.balance_of("researcher", "rachel") == before
+        assert market.ledger.open_escrows() == {}
+    finally:
+        mp.allocate = original
 
 
 def test_repeated_queries_are_reproducible(market):

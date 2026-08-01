@@ -17,6 +17,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from math import isfinite
 from typing import Any
 
 __all__ = [
@@ -115,6 +116,11 @@ def _coarsen(value: Any, bucket: int) -> str | None:
 
     if isinstance(value, int | float):
         if bucket <= 0:
+            return None
+        # NaN and the infinities have no meaningful band. Returning None drops the field,
+        # which is the fail-closed answer; raising here would let one malformed value poison
+        # every later read of the record that holds it.
+        if isinstance(value, float) and not isfinite(value):
             return None
         low = int(value // bucket) * bucket
         return f"{low}-{low + bucket - 1}"

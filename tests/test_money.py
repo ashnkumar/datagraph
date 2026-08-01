@@ -17,6 +17,35 @@ def test_allocation_sums_to_total_exactly(total, weights):
     assert sum(allocate(total, weights)) == total
 
 
+# The range above is comfortable; these cover the whole range the function actually accepts.
+# Floating-point apportionment passed the comfortable range and failed here, which is the
+# argument for testing to the contract rather than to the happy path.
+extreme_weights = st.lists(
+    st.floats(min_value=0.0, allow_nan=False, allow_infinity=False),
+    min_size=1,
+    max_size=8,
+)
+
+
+@given(total=st.integers(min_value=0, max_value=10**30), weights=extreme_weights)
+def test_allocation_is_exact_across_the_full_accepted_range(total, weights):
+    assert sum(allocate(total, weights)) == total
+
+
+@pytest.mark.parametrize(
+    ("total", "weights"),
+    [
+        (100, [1e308, 1e308]),  # the sum of these overflows a float to inf
+        (10**18, [1, 2, 3]),  # beyond 2^53, so float shares lose integer precision
+        (10**30, [1e-300, 1.0]),  # ratio too extreme for float shares to resolve
+    ],
+)
+def test_allocation_survives_values_that_break_float_arithmetic(total, weights):
+    result = allocate(total, weights)
+    assert sum(result) == total
+    assert all(share >= 0 for share in result)
+
+
 @given(total=st.integers(min_value=0, max_value=10**6), weights=finite_weights)
 def test_allocation_is_never_negative(total, weights):
     assert all(share >= 0 for share in allocate(total, weights))

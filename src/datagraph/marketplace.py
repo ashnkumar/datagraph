@@ -8,7 +8,6 @@ attribution has produced weights that exhaust the payment. Every path out of
 
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
@@ -17,7 +16,7 @@ from datagraph.ledger import Ledger
 from datagraph.models import ModelClient, ModelRefusal
 from datagraph.money import allocate
 from datagraph.policy import DEFAULT_COHORT_FLOOR, CohortTooSmall, enforce_cohort_floor
-from datagraph.registry import Record, Registry, provider_ids
+from datagraph.registry import Registry, SourceView, provider_ids
 
 __all__ = ["DEFAULT_MAX_SOURCES", "Marketplace", "QueryResult"]
 
@@ -34,12 +33,17 @@ class QueryResult:
     query_id: str
     question: str
     answer: str
-    sources: Sequence[Record]
+    sources: Sequence[SourceView]
+    """Disclosure-only views. A caller of :meth:`Marketplace.query` never receives raw values —
+    including on a refunded query, where the records were retrieved but never answered from."""
+
     payouts: Mapping[str, int]
     """Provider id -> credits earned. Sums to the payment unless the query was refunded."""
 
     attribution: Attribution | None = None
-    source_weights: Mapping[str, float] = field(default_factory=dict)
+    provider_weights: Mapping[str, float] = field(default_factory=dict)
+    """Provider id -> measured share of the answer."""
+
     model_calls: int = 0
     refunded: bool = False
     refund_reason: str | None = None
@@ -100,9 +104,12 @@ class Marketplace:
     def query(self, researcher_id: str, question: str, payment: int) -> QueryResult:
         """Answer ``question`` and pay the providers whose records shaped the answer.
 
-        The escrow is opened first, so the payment is committed before any work is done and a
-        failure part-way through cannot leave the researcher charged for nothing. Every exit
-        path settles or refunds.
+        The escrow is opened first, so the payment is committed before any work is done. Every
+        exit path settles or refunds — including exits by exception. Retrieval, generation,
+        attribution, apportionment, and settlement can all fail for reasons that have nothing
+        to do with the researcher (a timeout, a rate limit, a bad weight vector), and any of
+        those leaving the escrow open would debit the payer and strand the credits, so the
+        whole post-escrow body runs under a cleanup guard.
         """
         self._query_seq += 1
         query_id = f"q{self._query_seq}"
@@ -111,7 +118,31 @@ class Marketplace:
 
         self.ledger.open_escrow(escrow, researcher, payment)
 
-        sources = self.registry.search(question, limit=self.max_sources)
+        try:
+            return self._run(query_id, question, payment, escrow, researcher)
+        except BaseException:
+            # Refund only if the escrow survived: after a successful settlement there is
+            # nothing held, and refunding again would create credits. Re-raise either way —
+            # the caller still needs to see the failure.
+            if escrow in self.ledger.open_escrows():
+                self.ledger.refund_escrow(escrow, researcher)
+                self.ledger.check_invariants()
+            raise
+
+    def _run(
+        self, query_id: str, question: str, payment: int, escrow: str, researcher: str
+    ) -> QueryResult:
+        # Cap any one provider at a fair fraction of the slots. Tying it to the cohort floor
+        # keeps the two consistent: a full result set can always satisfy the floor, so a
+        # provider padding its dataset cannot force a refusal.
+        records = self.registry.search(
+            question,
+            limit=self.max_sources,
+            max_per_provider=max(1, self.max_sources // self.cohort_floor),
+        )
+        # Convert at the boundary: nothing downstream — prompts, results, the CLI — is handed
+        # an object carrying suppressed values.
+        sources = [r.view() for r in records]
 
         try:
             enforce_cohort_floor(provider_ids(sources), self.cohort_floor)
@@ -131,13 +162,14 @@ class Marketplace:
         except ModelRefusal as exc:
             return self._refund(query_id, question, escrow, researcher, sources, str(exc))
 
+        # Weights are already per-provider: the players in the game are providers, so there is
+        # no roll-up step and no way for a provider's share to depend on its row count.
         weights = result.clamped()
-        by_provider = self._aggregate(sources, weights)
 
         # Nothing measurably contributed. Paying anyway would mean paying for retrieval rather
         # than for contribution, which is the failure this project exists to avoid — so the
         # researcher gets their credits back instead.
-        if sum(by_provider.values()) <= 0:
+        if sum(weights.values()) <= 0:
             return self._refund(
                 query_id,
                 question,
@@ -150,8 +182,8 @@ class Marketplace:
                 model_calls=value.calls,
             )
 
-        recipients = sorted(by_provider)
-        shares = allocate(payment, [by_provider[p] for p in recipients])
+        recipients = sorted(weights)
+        shares = allocate(payment, [weights[p] for p in recipients])
         payouts = dict(zip(recipients, shares, strict=True))
 
         self.ledger.settle_escrow(
@@ -166,7 +198,7 @@ class Marketplace:
             sources=sources,
             payouts=payouts,
             attribution=result,
-            source_weights=weights,
+            provider_weights=weights,
             model_calls=value.calls,
         )
 
@@ -177,26 +209,13 @@ class Marketplace:
             return {"permutations": self.permutations, "seed": self.seed}
         return {}
 
-    @staticmethod
-    def _aggregate(sources: Sequence[Record], weights: Mapping[str, float]) -> dict[str, float]:
-        """Roll per-record weights up to per-provider weights.
-
-        A provider may hold several of the retrieved records, and it is the provider who gets
-        paid. Summing is right here: the Shapley value is additive, so a provider's share of
-        the answer is the sum of their records' shares.
-        """
-        totals: defaultdict[str, float] = defaultdict(float)
-        for source in sources:
-            totals[source.provider_id] += weights.get(source.id, 0.0)
-        return dict(totals)
-
     def _refund(
         self,
         query_id: str,
         question: str,
         escrow: str,
         researcher: str,
-        sources: Sequence[Record],
+        sources: Sequence[SourceView],
         reason: str,
         attribution: Attribution | None = None,
         answer: str = "",

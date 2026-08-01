@@ -49,10 +49,17 @@ _INTERNAL_TAG = re.compile(r"</?(?:thinking|internal|scratchpad)[^>]*>", re.IGNO
 
 @runtime_checkable
 class Source(Protocol):
-    """Anything renderable into a prompt with a stable identity."""
+    """Anything renderable into a prompt, with an identity and an owner.
+
+    ``provider_id`` is part of the protocol because attribution groups by it: the players in
+    the cooperative game are the parties who get paid, not the individual rows.
+    """
 
     @property
     def id(self) -> str: ...
+
+    @property
+    def provider_id(self) -> str: ...
 
     def render(self) -> str: ...
 

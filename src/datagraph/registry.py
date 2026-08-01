@@ -27,6 +27,7 @@ __all__ = [
     "Record",
     "Registry",
     "RegistryError",
+    "SourceView",
     "provider_ids",
     "render_sources",
 ]
@@ -73,11 +74,32 @@ class Dataset:
 
 
 @dataclass(frozen=True)
+class SourceView:
+    """A record as anything outside the registry is allowed to see it.
+
+    This type exists because "the raw values stay in the store" is only true if there is no
+    object crossing the boundary that carries them. :class:`Record` carries both; handing one
+    to a caller hands them the suppressed fields too, however carefully the prompt was built.
+    A view carries the disclosed projection and the *names* of what was suppressed — enough to
+    show a user what redaction did, without the values it removed.
+    """
+
+    id: str
+    provider_id: str
+    disclosed: Mapping[str, Any]
+    suppressed_fields: tuple[str, ...]
+
+    def render(self) -> str:
+        """The record as it appears to the model — disclosed fields only."""
+        body = ", ".join(f"{k}: {v}" for k, v in sorted(self.disclosed.items()))
+        return f"[{self.id}] {body}"
+
+
+@dataclass(frozen=True)
 class Record:
     """One row of provider data, plus the projection the policy permits.
 
-    ``values`` is raw and never leaves this tier. ``disclosed`` is what may be shown, and is
-    what the prompt builder receives.
+    ``values`` is raw. It stays inside the registry: use :meth:`view` at every boundary.
     """
 
     id: str
@@ -85,6 +107,15 @@ class Record:
     provider_id: str
     values: Mapping[str, Any]
     disclosed: Mapping[str, Any]
+
+    def view(self) -> SourceView:
+        """The disclosure-only projection of this record."""
+        return SourceView(
+            id=self.id,
+            provider_id=self.provider_id,
+            disclosed=dict(self.disclosed),
+            suppressed_fields=tuple(sorted(set(self.values) - set(self.disclosed))),
+        )
 
     def render(self) -> str:
         """The record as it appears to the model — disclosed fields only."""
@@ -132,16 +163,33 @@ class Registry:
         return Dataset(id=dataset_id, provider_id=provider_id, name=name, policy=policy)
 
     def add_record(self, record_id: str, dataset_id: str, values: Mapping[str, Any]) -> Record:
+        """Store a record. Rejected input is rejected *before* anything is committed.
+
+        Order matters here. Serialising and projecting first means a value the policy cannot
+        handle fails this call and leaves the store untouched. Committing first and projecting
+        after would persist the bad row, and then every later ``all_records()`` or ``search()``
+        would raise on it — one malformed insert taking down every read.
+        """
         dataset = self.get_dataset(dataset_id)
         if dataset is None:
             raise RegistryError(f"unknown dataset {dataset_id!r}")
 
+        raw = dict(values)
+        try:
+            # allow_nan=False: NaN and the infinities are not valid JSON, and accepting them
+            # here is what let a non-finite value reach the projection in the first place.
+            encoded = json.dumps(raw, sort_keys=True, allow_nan=False)
+        except ValueError as exc:
+            raise RegistryError(f"record {record_id!r} is not serialisable: {exc}") from exc
+
+        record = self._to_record(record_id, dataset, raw)  # projects; raises before we commit
+
         self._conn.execute(
             "INSERT INTO records (id, dataset_id, values_json) VALUES (?, ?, ?)",
-            (record_id, dataset_id, json.dumps(dict(values), sort_keys=True)),
+            (record_id, dataset_id, encoded),
         )
         self._conn.commit()
-        return self._to_record(record_id, dataset, dict(values))
+        return record
 
     # -- reads --------------------------------------------------------------------------
 
@@ -178,13 +226,27 @@ class Registry:
         ).fetchall()
         return [self._row_to_record(r) for r in rows]
 
-    def search(self, question: str, limit: int = 8) -> list[Record]:
+    def search(
+        self, question: str, limit: int = 8, max_per_provider: int | None = None
+    ) -> list[Record]:
         """Return up to ``limit`` records whose disclosed content best matches ``question``.
 
         Scoring is token overlap against each record's disclosed field names and values;
         records with no overlap are excluded. Ties break by record id, so results are stable
         for a given store — which matters, because an unstable source set would show up as
         noise in the attribution measurement.
+
+        Two filters run before the cap, and both exist to stop one provider dominating the
+        result set by manufacturing rows:
+
+        * **Duplicate suppression.** Two records from the same provider with identical
+          disclosed content carry one fact between them, so only the first is kept. This is
+          lossless — the second adds nothing a query could ever see.
+        * **Per-provider cap.** ``max_per_provider`` bounds how many slots any one provider can
+          occupy. Without it, a provider that pads its dataset with near-duplicates crowds
+          everyone else out of the result set: attribution is safe from that (players are
+          providers), but the *cohort floor* is not, and a query that should have been answered
+          gets refused instead.
         """
         wanted = set(tokenize(question))
         if not wanted:
@@ -200,7 +262,26 @@ class Registry:
                 scored.append((score, record.id, record))
 
         scored.sort(key=lambda t: (-t[0], t[1]))
-        return [record for _, _, record in scored[:limit]]
+
+        seen: set[tuple[str, str]] = set()
+        per_provider: dict[str, int] = {}
+        chosen: list[Record] = []
+
+        for _, _, record in scored:
+            signature = (record.provider_id, json.dumps(dict(record.disclosed), sort_keys=True))
+            if signature in seen:
+                continue
+            if max_per_provider is not None:
+                if per_provider.get(record.provider_id, 0) >= max_per_provider:
+                    continue
+                per_provider[record.provider_id] = per_provider.get(record.provider_id, 0) + 1
+
+            seen.add(signature)
+            chosen.append(record)
+            if len(chosen) == limit:
+                break
+
+        return chosen
 
     # -- internals ----------------------------------------------------------------------
 
@@ -221,12 +302,12 @@ class Registry:
         )
 
 
-def provider_ids(records: Iterable[Record]) -> list[str]:
+def provider_ids(records: Iterable[Record | SourceView]) -> list[str]:
     """Provider ids behind a set of records, for the cohort check."""
     return [r.provider_id for r in records]
 
 
-def render_sources(records: Sequence[Record]) -> str:
+def render_sources(records: Sequence[Record | SourceView]) -> str:
     """Render records for a prompt, in a stable order."""
     return "\n".join(r.render() for r in sorted(records, key=lambda r: r.id))
 
