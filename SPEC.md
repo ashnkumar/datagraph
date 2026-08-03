@@ -335,3 +335,14 @@ were design errors rather than slips:
 8. **Float apportionment lost credits** — exact within the range the property test covered, wrong
    outside it (`allocate(10**18, [1,2,3])` was 29 credits short). Rational arithmetic now, and the
    property test runs to the contract rather than to the comfortable range.
+
+Rehearsing a cold start — fresh clone, empty dependency cache, no key, following the README
+literally rather than from memory — found one more:
+
+9. **The documented `.env` file was never read** (§6) — the README told the reader to copy
+   `.env.example` and put their key in it, and nothing in the project ever loaded that file.
+   Obeying the instructions produced an SDK-internal `TypeError` about resolving an authentication
+   method. There is a loader now; a missing key is reported as an instruction rather than a stack
+   trace; and `.env.example` no longer documents a database path that nothing reads. The lesson is
+   narrow but general: the offline path was tested exhaustively because it was cheap to test, and
+   the one step that needed configuration was the one step never run from a clean machine.

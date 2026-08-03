@@ -1,6 +1,8 @@
 import pytest
+from rich.console import Console
 
-from datagraph.cli import main
+from datagraph.cli import ConfigError, _model, main
+from datagraph.env import load_env_file
 
 
 @pytest.fixture
@@ -69,3 +71,40 @@ def test_unknown_command_exits_nonzero():
     with pytest.raises(SystemExit) as excinfo:
         main(["nonsense"])
     assert excinfo.value.code != 0
+
+
+def test_live_without_a_key_explains_what_to_do(run, monkeypatch, tmp_path):
+    # Somewhere with no .env, and with nothing exported, so this is a genuinely unconfigured
+    # machine rather than whatever the developer happens to have set.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    code, out = run("demo", "--live")
+
+    assert code == 2
+    assert "ANTHROPIC_API_KEY" in out
+    assert ".env" in out
+    # The SDK's own error names a class and an internal concept; this one names the fix.
+    assert "TypeError" not in out
+    assert "Traceback" not in out
+
+
+def test_a_key_in_a_dotenv_file_satisfies_the_live_check(monkeypatch, tmp_path):
+    """The README tells the reader to put their key in `.env`; this is that promise."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=sk-ant-from-the-file\n", encoding="utf-8")
+
+    load_env_file()
+
+    # Constructing the client is not a network call, so this reaches the real code path
+    # without spending anything.
+    assert _model(live=True, console=Console()) is not None
+
+
+def test_the_live_check_is_what_rejects_an_unconfigured_machine(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    with pytest.raises(ConfigError):
+        _model(live=True, console=Console())

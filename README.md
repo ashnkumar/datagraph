@@ -51,6 +51,9 @@ cp .env.example .env      # add your ANTHROPIC_API_KEY
 uv run datagraph demo --live
 ```
 
+`.env` is read at startup and is gitignored. Anything already exported in your shell wins, so
+`ANTHROPIC_API_KEY=... uv run datagraph demo --live` works too.
+
 ## The interesting decision
 
 **Paying providers for one answer is a cost-allocation problem, not a ranking problem.**

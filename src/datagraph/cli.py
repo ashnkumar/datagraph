@@ -9,6 +9,7 @@ engines side by side, which is the fastest way to see why the choice matters.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
 
@@ -16,13 +17,14 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from datagraph.env import load_env_file
 from datagraph.ledger import Ledger
 from datagraph.marketplace import Marketplace, QueryResult
 from datagraph.models import FakeModel, ModelClient
 from datagraph.registry import Registry
 from datagraph.sample_data import DEMO_QUESTION, seed_demo
 
-__all__ = ["main"]
+__all__ = ["ConfigError", "main"]
 
 ENGINES = ("shapley", "exact_shapley", "leave_one_out")
 RESEARCHER = "rowan"
@@ -30,9 +32,26 @@ STARTING_CREDITS = 100_000
 PAYMENT = 1_000
 
 
+class ConfigError(Exception):
+    """Something is wrong with the user's setup rather than with the run.
+
+    Reported as a plain message with no exception class name in front of it, because the
+    reader is being told what to go and fix.
+    """
+
+
 def _model(live: bool, console: Console) -> ModelClient:
     if not live:
         return FakeModel()
+
+    # Checked here rather than left to the SDK, which raises an internal TypeError about
+    # resolving an authentication method — accurate, but not an instruction.
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise ConfigError(
+            "ANTHROPIC_API_KEY is not set, so --live cannot reach the API.\n"
+            "Set it in a .env file (cp .env.example .env) or export it in your shell.\n"
+            "Without --live everything runs offline against the deterministic model."
+        )
 
     from datagraph.models import AnthropicModel
 
@@ -244,8 +263,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     console = Console()
+
+    # Before anything reads the environment, and after argument parsing so that `--help`
+    # never touches the filesystem. Anything already exported wins.
+    load_env_file()
+
     try:
         return int(args.func(args, console))
+    except ConfigError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 2
     except Exception as exc:
         console.print(f"[red]{type(exc).__name__}:[/red] {exc}")
         return 1
