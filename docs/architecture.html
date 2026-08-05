@@ -1,0 +1,253 @@
+<!doctype html>
+<meta charset="utf-8">
+<!--
+  Architecture diagram. Render with:
+
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    --headless=new --disable-gpu --no-sandbox --hide-scrollbars \
+    --no-first-run --no-default-browser-check --disable-extensions \
+    --user-data-dir=/tmp/dg-render --virtual-time-budget=3000 \
+    --force-device-scale-factor=2 --window-size=1560,830 \
+    --screenshot=docs/architecture.png "file://$PWD/docs/architecture.html"
+
+  The numbers 1-7 key to the component table in README.md. Every module name,
+  command, table name and default is read out of src/datagraph/.
+-->
+<style>
+  :root {
+    --ink: #1c1c1e;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --grey-b: #dcdfe4; --grey-f: #eef0f2;
+    --blue-b: #9cc4d8; --blue-f: #dff0f7; --blue-d: #2d6c8a;
+    --green-b: #a8cdb2; --green-f: #e2f0e6; --green-d: #2f6b43;
+    --purp-b: #c3aede; --purp-f: #eee7f9; --purp-d: #5b3f8c;
+    --red-b: #f0bdb3; --red-f: #fdeeeb; --red-d: #b03a2c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 1560px; height: 830px;
+    font-family: var(--sans); color: var(--ink); background: #fff;
+    padding: 26px 38px 20px; -webkit-font-smoothing: antialiased;
+  }
+  .row { display: grid; grid-template-columns: 112px 1fr; gap: 15px; align-items: center; }
+  .gutter {
+    font-size: 12px; font-weight: 700; line-height: 1.3; text-align: right;
+    color: #8b93a1; letter-spacing: .01em;
+  }
+  .gutter span { font-weight: 500; color: #a8afba; }
+  .band { border-radius: 14px; padding: 13px 16px 14px; }
+  .band.grey  { background: var(--grey-f);  border: 1.5px solid var(--grey-b); }
+  .band.blue  { background: var(--blue-f);  border: 1.5px solid var(--blue-b); }
+  .band.purp  { background: var(--purp-f);  border: 1.5px solid var(--purp-b); }
+  .band.green { background: var(--green-f); border: 1.5px solid var(--green-b); }
+
+  .btitle { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .num {
+    width: 20px; height: 20px; border-radius: 50%; flex: none; background: #fff;
+    display: grid; place-items: center; font-size: 11.5px; font-weight: 700;
+  }
+  .n-g { color: #6a7280; border: 1.5px solid #c3c8d0; }
+  .n-b { color: var(--blue-d); border: 1.5px solid var(--blue-b); }
+  .n-gr{ color: var(--green-d); border: 1.5px solid var(--green-b); }
+  .n-p { color: var(--purp-d); border: 1.5px solid var(--purp-b); }
+  .bt { font-size: 15.5px; font-weight: 700; letter-spacing: -.01em; }
+  .bt small { font-weight: 500; font-size: 12.5px; color: #7b838f; margin-left: 7px; letter-spacing: 0; }
+  .bt code { font-family: var(--mono); font-size: 12.5px; font-weight: 600; color: #6a7280; margin-left: 7px; }
+
+  .card { background: #fff; border: 1px solid #e3e6ea; border-radius: 10px; padding: 10px 12px; }
+  .clabel {
+    font-size: 9.5px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase;
+    color: #9aa2af; margin-bottom: 7px;
+  }
+  .m { font-family: var(--mono); }
+  .pill {
+    display: inline-block; font-family: var(--mono); font-size: 11.5px;
+    background: #f2f4f7; border: 1px solid #e2e6ec; border-radius: 6px;
+    padding: 4px 9px; margin: 0 5px 5px 0; color: #3f4552;
+  }
+  .pill.hot  { background: var(--red-f); border-color: var(--red-b); color: var(--red-d); font-weight: 700; }
+  .pill.cool { background: #eaf3f8; border-color: #bcd8e6; color: var(--blue-d); }
+  .pill.mint { background: #e4f2e8; border-color: #a8cdb2; color: var(--green-d); }
+
+  /* the ordered pipeline */
+  .flow { display: flex; align-items: stretch; gap: 0; }
+  .step {
+    flex: 1; background: #fff; border: 1px solid #e3e6ea; border-radius: 9px;
+    padding: 8px 6px 9px; text-align: center;
+  }
+  .step .sn { font-size: 9.5px; font-weight: 700; color: #b0b7c2; letter-spacing: .06em; }
+  .step .st { font-family: var(--mono); font-size: 11.8px; font-weight: 700; color: #3f4552; margin-top: 3px; }
+  .step .ss { font-size: 10.6px; color: #8b93a1; margin-top: 3px; line-height: 1.3; }
+  .step.gate { background: var(--red-f); border-color: var(--red-b); }
+  .step.gate .st { color: var(--red-d); }
+  .step.gate .ss { color: #b8776c; }
+  .chev { display: grid; place-items: center; width: 20px; color: #c3c8d0; font-size: 14px; flex: none; }
+
+  .conn { display: grid; grid-template-columns: 112px 1fr; gap: 15px; }
+  .legs { display: flex; justify-content: space-between; padding: 0 40px; }
+  .leg { display: flex; align-items: center; gap: 9px; font-size: 12.3px; color: #6b7280; }
+  .leg .m { font-size: 11.4px; }
+  .glyph { font-size: 16px; line-height: 1; color: #98a0ad; }
+  .h9 { height: 24px; }
+
+  .cols2 { display: grid; grid-template-columns: 1.5fr 1fr; gap: 12px; }
+  .cols2b { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .cols3b { display: grid; grid-template-columns: 1fr 1fr 1.12fr; gap: 12px; }
+
+  .eng { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 9px; }
+  .e {
+    background: #fff; border: 1px solid #e3e6ea; border-radius: 9px; padding: 9px 10px;
+  }
+  .e .en { font-family: var(--mono); font-size: 12px; font-weight: 700; color: #3f4552; }
+  .e .ec { font-size: 10.8px; color: #8b93a1; margin-top: 4px; line-height: 1.35; }
+  .e.def { background: #eaf3f8; border-color: #bcd8e6; }
+  .e.def .en { color: var(--blue-d); }
+  .e.bad { background: var(--red-f); border-color: var(--red-b); }
+  .e.bad .en { color: var(--red-d); }
+  .e.bad .ec { color: #b8776c; }
+
+  .kv { font-size: 11.6px; color: #5c6470; line-height: 1.5; }
+  .kv b { color: #3f4552; }
+  .legend { display: flex; gap: 22px; justify-content: center; margin-top: 13px; font-size: 12px; color: #7b838f; }
+  .sw { display: inline-block; width: 13px; height: 13px; border-radius: 3.5px; margin-right: 7px; vertical-align: -2px; }
+</style>
+
+<!-- ============ 1  CLI ============ -->
+<div class="row">
+  <div class="gutter">You</div>
+  <div class="band grey">
+    <div class="btitle"><div class="num n-g">1</div>
+      <div class="bt">Command line<code>cli.py</code><small>the only interface — no server, no web console</small></div></div>
+    <div>
+      <span class="pill">datagraph demo</span><span class="pill">datagraph compare</span><span class="pill">datagraph providers</span><span class="pill">--engine</span><span class="pill">--question</span><span class="pill">--payment</span><span class="pill">--live</span>
+    </div>
+  </div>
+</div>
+
+<div class="conn"><div></div><div class="legs h9">
+  <div class="leg"><span class="glyph">&#9660;</span> one question, one payment</div>
+  <div class="leg"><span class="glyph">&#9650;</span> a <span class="m">QueryResult</span> — disclosed projections only, never raw records</div>
+</div></div>
+
+<!-- ============ 2  MARKETPLACE ============ -->
+<div class="row">
+  <div class="gutter">Marketplace<br><span>one process</span></div>
+  <div class="band blue">
+    <div class="btitle"><div class="num n-b">2</div>
+      <div class="bt">The query loop<code>marketplace.py</code><small>ordered on purpose — money is escrowed first and the gate runs before any generation</small></div></div>
+
+    <div class="flow">
+      <div class="step"><div class="sn">1</div><div class="st">escrow</div><div class="ss">payment held<br>before any work</div></div>
+      <div class="chev">&#9654;</div>
+      <div class="step"><div class="sn">2</div><div class="st">retrieve</div><div class="ss">≤ 6 records, duplicates<br>and per-provider caps</div></div>
+      <div class="chev">&#9654;</div>
+      <div class="step"><div class="sn">3</div><div class="st">redact</div><div class="ss">policy applied before<br>the prompt exists</div></div>
+      <div class="chev">&#9654;</div>
+      <div class="step gate"><div class="sn">4</div><div class="st">cohort floor</div><div class="ss">&lt; 3 providers &rarr;<br>refuse and refund</div></div>
+      <div class="chev">&#9654;</div>
+      <div class="step"><div class="sn">5</div><div class="st">attribute</div><div class="ss">measure each<br>provider's share</div></div>
+      <div class="chev">&#9654;</div>
+      <div class="step"><div class="sn">6</div><div class="st">settle</div><div class="ss">one balanced<br>transaction</div></div>
+    </div>
+
+    <div class="card" style="margin-top:11px">
+      <div class="kv">
+        Every exit path either settles the escrow or refunds it in full. The whole query runs under a
+        refund guard that catches <b>BaseException</b>, so a timeout — or a ctrl-C — cannot debit the
+        researcher and strand the credits.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="conn"><div></div><div class="legs h9">
+  <div class="leg"><span class="glyph">&#9660;</span> <span class="m">v(S)</span> for each coalition of providers</div>
+  <div class="leg"><span class="glyph">&#9650;</span> one weight per provider, summing to <span class="m">v(N)</span></div>
+</div></div>
+
+<!-- ============ 3+4  ATTRIBUTION / MODEL ============ -->
+<div class="row">
+  <div class="gutter">Measurement</div>
+  <div class="band purp">
+    <div class="btitle"><div class="num n-p">3</div>
+      <div class="bt">Attribution<code>attribution.py</code><small>both engines in one file — the contrast is the point</small></div></div>
+
+    <div class="eng">
+      <div class="e def"><div class="en">shapley</div><div class="ec">Sampled — 2000 seeded permutations. Efficient <i>exactly</i>, because each permutation's marginals telescope</div></div>
+      <div class="e"><div class="en">exact_shapley</div><div class="ec">All 2<sup>n</sup> coalitions. No variance, and at this n it costs about the same</div></div>
+      <div class="e bad"><div class="en">leave_one_out</div><div class="ec">n + 1 calls. Kept as the counter-example: zeroes redundant providers and needs normalising</div></div>
+    </div>
+
+    <div class="cols2" style="margin-top:11px">
+      <div class="card">
+        <div class="clabel">v(S) — memoised on the coalition</div>
+        <div class="kv">
+          Players are <b>providers</b>, not records, so the space is <span class="m">2<sup>providers</sup></span>
+          and a payout cannot be inflated by splitting one row into several.
+          <span class="m">v(∅)=0</span>, <span class="m">v(N)=1</span>, rescaled against the no-source answer.
+        </div>
+      </div>
+      <div class="card">
+        <div class="btitle" style="margin-bottom:8px"><div class="num n-p">4</div>
+          <div class="bt" style="font-size:13.5px">Model<code style="font-size:11.5px">models.py</code></div></div>
+        <div>
+          <span class="pill cool">FakeModel — default, offline</span><span class="pill">AnthropicModel</span><span class="pill">claude-opus-5</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="conn"><div></div><div class="legs h9" style="justify-content:center">
+  <div class="leg"><span class="glyph">&#9660;</span> weights become whole credits — largest remainder over exact rationals</div>
+</div></div>
+
+<!-- ============ 5/6/7  STATE ============ -->
+<div class="row">
+  <div class="gutter">State</div>
+  <div class="band green">
+    <div class="cols3b">
+      <div class="card">
+        <div class="btitle" style="margin-bottom:8px"><div class="num n-gr">5</div>
+          <div class="bt" style="font-size:14px">Policy<code style="font-size:11.5px">policy.py</code></div></div>
+        <div>
+          <span class="pill mint">OPEN</span><span class="pill cool">DERIVED</span><span class="pill hot">HIDDEN</span>
+        </div>
+        <div class="kv" style="margin-top:4px">
+          Fails closed: an unlisted field is hidden, and a <span class="m">DERIVED</span> value with no
+          safe coarse form is dropped rather than passed through.
+        </div>
+      </div>
+      <div class="card">
+        <div class="btitle" style="margin-bottom:8px"><div class="num n-gr">6</div>
+          <div class="bt" style="font-size:14px">Registry<code style="font-size:11.5px">registry.py</code></div></div>
+        <div>
+          <span class="pill">providers</span><span class="pill">datasets</span><span class="pill">records</span>
+        </div>
+        <div class="kv" style="margin-top:4px">
+          SQLite through the standard library — no service to run, which is what makes the quickstart
+          a single command.
+        </div>
+      </div>
+      <div class="card">
+        <div class="btitle" style="margin-bottom:8px"><div class="num n-gr">7</div>
+          <div class="bt" style="font-size:14px">Money<code style="font-size:11.5px">ledger.py · money.py</code></div></div>
+        <div>
+          <span class="pill mint">external</span><span class="pill mint">researcher</span><span class="pill hot">escrow:&lt;query&gt;</span><span class="pill mint">provider</span>
+        </div>
+        <div class="kv" style="margin-top:4px">
+          Debits equal credits on every write, and a settlement whose payouts don't exhaust its escrow
+          is <b>refused</b> rather than rounded.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="legend">
+  <span><i class="sw" style="background:var(--grey-f);border:1.5px solid var(--grey-b)"></i>You</span>
+  <span><i class="sw" style="background:var(--blue-f);border:1.5px solid var(--blue-b)"></i>Orchestration — escrow to settlement</span>
+  <span><i class="sw" style="background:var(--purp-f);border:1.5px solid var(--purp-b)"></i>Measurement — the engines</span>
+  <span><i class="sw" style="background:var(--green-f);border:1.5px solid var(--green-b)"></i>State — data and money</span>
+</div>

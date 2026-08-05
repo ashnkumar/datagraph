@@ -1,0 +1,223 @@
+<!doctype html>
+<meta charset="utf-8">
+<!--
+  Narrative diagram. Render with:
+
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    --headless=new --disable-gpu --no-sandbox --hide-scrollbars \
+    --no-first-run --no-default-browser-check --disable-extensions \
+    --user-data-dir=/tmp/dg-render --virtual-time-budget=3000 \
+    --force-device-scale-factor=2 --window-size=1560,650 \
+    --screenshot=docs/how-it-works.png "file://$PWD/docs/how-it-works.html"
+
+  Every figure here is produced by `datagraph demo --engine exact_shapley` on the
+  seeded fixture. The v(S) values come from the same run.
+-->
+<style>
+  :root {
+    --ink: #1c1c1e;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --grey-b: #dcdfe4; --grey-f: #eef0f2;
+    --blue-b: #9cc4d8; --blue-f: #dff0f7; --blue-d: #2d6c8a;
+    --green-b: #a8cdb2; --green-f: #e2f0e6; --green-d: #2f6b43;
+    --purp-b: #c3aede; --purp-f: #eee7f9; --purp-d: #5b3f8c;
+    --red-b: #f0bdb3; --red-f: #fdeeeb; --red-d: #b03a2c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 1560px; height: 650px;
+    font-family: var(--sans); color: var(--ink); background: #fff;
+    padding: 26px 32px 20px; -webkit-font-smoothing: antialiased;
+    display: grid; grid-template-rows: auto 1fr; gap: 16px;
+  }
+  .head { display: flex; align-items: baseline; gap: 14px; }
+  .head h1 { font-size: 19px; letter-spacing: -.015em; }
+  .head .sub { font-size: 13px; color: #7b838f; }
+  .panels { display: grid; grid-template-columns: 1fr 1.06fr 1.04fr; gap: 15px; }
+
+  .panel { border-radius: 15px; padding: 15px 16px 16px; display: flex; flex-direction: column; }
+  .p1 { background: var(--grey-f);  border: 1.5px solid var(--grey-b); }
+  .p2 { background: var(--blue-f);  border: 1.5px solid var(--blue-b); }
+  .p3 { background: var(--green-f); border: 1.5px solid var(--green-b); }
+
+  .ptitle { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+  .num {
+    width: 22px; height: 22px; border-radius: 50%; flex: none; background: #fff;
+    display: grid; place-items: center; font-size: 12px; font-weight: 700;
+  }
+  .n-g { color: #6a7280; border: 1.5px solid #c3c8d0; }
+  .n-b { color: var(--blue-d); border: 1.5px solid var(--blue-b); }
+  .n-gr{ color: var(--green-d); border: 1.5px solid var(--green-b); }
+  .pt { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+
+  .card { background: #fff; border: 1px solid #e3e6ea; border-radius: 10px; padding: 11px 12px; }
+  .card + .card { margin-top: 9px; }
+  .clabel {
+    font-size: 9.5px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase;
+    color: #9aa2af; margin-bottom: 7px;
+  }
+  .m { font-family: var(--mono); }
+  .q { font-size: 12.8px; line-height: 1.45; color: #3f4552; }
+
+  .pill {
+    display: inline-block; font-family: var(--mono); font-size: 11px;
+    background: #f2f4f7; border: 1px solid #e2e6ec; border-radius: 6px;
+    padding: 3px 8px; margin: 0 4px 4px 0; color: #3f4552;
+  }
+  .pill.ok  { background: #e4f2e8; border-color: #a8cdb2; color: var(--green-d); }
+  .pill.no  { background: var(--red-f); border-color: var(--red-b); color: var(--red-d);
+              text-decoration: line-through; }
+  .pill.hot { background: var(--red-f); border-color: var(--red-b); color: var(--red-d); font-weight: 700; }
+
+  .rows { display: grid; gap: 5px; }
+  .row2 { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px;
+          font-size: 12px; color: #5c6470; }
+
+  /* the v(S) ladder */
+  .vrow {
+    display: grid; grid-template-columns: 1fr auto; align-items: center;
+    padding: 6px 9px; border-radius: 7px; background: #fff;
+    border: 1px solid #e3e6ea; margin-bottom: 5px;
+  }
+  .vrow .lhs { font-family: var(--mono); font-size: 11.8px; color: #3f4552; }
+  .vrow .rhs { font-family: var(--mono); font-size: 12.5px; font-weight: 700; color: var(--blue-d); }
+  .vrow.flag { background: var(--red-f); border-color: var(--red-b); }
+  .vrow.flag .rhs { color: var(--red-d); }
+  .note {
+    font-size: 11.8px; line-height: 1.45; color: #5c6470; margin-top: 8px;
+  }
+  .note b { color: var(--red-d); }
+
+  /* payout table */
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 5.5px 7px; font-size: 12.2px; text-align: right; }
+  th { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: #9aa2af; font-weight: 700; }
+  th:first-child, td:first-child { text-align: left; font-family: var(--mono); font-size: 11.6px; }
+  td { font-family: var(--mono); }
+  tbody tr + tr td { border-top: 1px solid #eef0f2; }
+  .zero { color: var(--red-d); font-weight: 700; }
+  tfoot td { border-top: 1.5px solid #dcdfe4; font-weight: 700; font-size: 11.8px; }
+  .good { color: var(--green-d); }
+  .bad  { color: var(--red-d); }
+
+  .arrow {
+    position: absolute; font-size: 20px; color: #b9c0ca;
+  }
+  .foot {
+    margin-top: auto; padding-top: 10px; font-size: 11.6px; line-height: 1.45; color: #6b7280;
+  }
+  .foot b { color: var(--ink); }
+</style>
+
+<div class="head">
+  <h1>One query, measured and settled</h1>
+  <div class="sub">every figure below is printed by <span class="m">datagraph demo --engine exact_shapley</span> on the seeded fixture</div>
+</div>
+
+<div class="panels">
+
+  <!-- ============ PANEL 1 ============ -->
+  <div class="panel p1">
+    <div class="ptitle"><div class="num n-g">1</div><div class="pt">What goes in</div></div>
+
+    <div class="card">
+      <div class="clabel">The question</div>
+      <div class="q">What do the records show about sleep hours and resting heart rate in the northern region?</div>
+    </div>
+
+    <div class="card">
+      <div class="clabel">Escrowed first, before any work</div>
+      <div class="rows">
+        <div class="row2"><span><span class="m">rowan</span> &rarr; <span class="m">escrow:q1</span></span><b class="m">1000 credits</b></div>
+        <div class="row2"><span>retrieved</span><b class="m">5 records &middot; 4 providers</b></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="clabel">Redacted by policy — <span class="m" style="text-transform:none;letter-spacing:0">rec-02</span></div>
+      <div style="margin-bottom:6px">
+        <span class="pill ok">region=northern</span><span class="pill ok">sleep_hours=8</span><span class="pill ok">resting_hr=55</span><span class="pill ok">age=40-49</span><span class="pill ok">recorded_on=2026-03</span>
+      </div>
+      <div>
+        <span class="pill no">participant_ref</span><span class="pill no">date_of_birth</span>
+      </div>
+      <div class="note" style="margin-top:7px">
+        <span class="m">age</span> and <span class="m">recorded_on</span> are <span class="m">DERIVED</span>, so they arrive
+        banded and month-truncated. The two struck fields are <span class="m">HIDDEN</span> — absent from the object the
+        prompt is built from, not filtered out of the answer afterwards.
+      </div>
+    </div>
+
+    <div class="foot">
+      A query spanning fewer than <b>3</b> providers is refused here, before the model is called.
+    </div>
+  </div>
+
+  <!-- ============ PANEL 2 ============ -->
+  <div class="panel p2">
+    <div class="ptitle"><div class="num n-b">2</div><div class="pt">What it measures</div></div>
+
+    <div class="card" style="margin-bottom:9px">
+      <div class="clabel">Regenerate the answer from every subset of providers</div>
+      <div class="q" style="font-size:12.4px">
+        <span class="m">v(S)</span> is how much of the full answer survives when only the providers in
+        <span class="m">S</span> are present. Values are memoised on the coalition, so the whole query costs
+        <b>16 model calls</b> — <span class="m">2<sup>4</sup></span>, not <span class="m">2<sup>5</sup></span>,
+        because the players are providers rather than records.
+      </div>
+    </div>
+
+    <div class="vrow"><span class="lhs">v( &empty; )</span><span class="rhs">0.0000</span></div>
+    <div class="vrow"><span class="lhs">v( {borealis} )</span><span class="rhs">0.6925</span></div>
+    <div class="vrow flag"><span class="lhs">v( {borealis, cascade} )</span><span class="rhs">0.6925</span></div>
+    <div class="vrow"><span class="lhs">v( {aurora, delta} )</span><span class="rhs">0.9211</span></div>
+    <div class="vrow"><span class="lhs">v( all four )</span><span class="rhs">1.0000</span></div>
+
+    <div class="note">
+      <b>Adding <span class="m">cascade</span> to <span class="m">borealis</span> changes the value by exactly zero.</b>
+      They disclose identical records, so each one is redundant given the other. That is the whole
+      disagreement between the engines, in one line — and it is in the fixture on purpose, because
+      redundancy does not arrive on cue.
+    </div>
+  </div>
+
+  <!-- ============ PANEL 3 ============ -->
+  <div class="panel p3">
+    <div class="ptitle"><div class="num n-gr">3</div><div class="pt">What comes out</div></div>
+
+    <div class="card">
+      <div class="clabel">Payout of the 1000-credit escrow</div>
+      <table>
+        <thead>
+          <tr><th>provider</th><th>shapley</th><th>leave-one-out</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>aurora</td><td>241</td><td>287</td></tr>
+          <tr><td>borealis</td><td>197</td><td class="zero">0</td></tr>
+          <tr><td>cascade</td><td>197</td><td class="zero">0</td></tr>
+          <tr><td>delta</td><td>365</td><td>713</td></tr>
+        </tbody>
+        <tfoot>
+          <tr><td>weights sum to</td><td class="good">1.0000</td><td class="bad">0.2744</td></tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="clabel">Why the sums matter</div>
+      <div class="q" style="font-size:12.2px">
+        Shapley weights sum to <span class="m">v(N)</span> exactly, so the escrow is exhausted and settlement is
+        one balanced transaction. Leave-one-out reaches <span class="m">0.2744</span> and has to be normalised —
+        and normalising is what moves <span class="m">borealis</span> and <span class="m">cascade</span>'s credit
+        onto whoever happened to be unique.
+      </div>
+    </div>
+
+    <div class="foot">
+      Weights become whole credits by largest-remainder apportionment over exact rationals, and the
+      ledger <b>refuses</b> a settlement whose payouts don't exhaust the escrow.
+    </div>
+  </div>
+
+</div>

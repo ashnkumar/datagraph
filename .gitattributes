@@ -1,0 +1,3 @@
+# The HTML under docs/ is diagram source, rendered to PNG for the README. It is
+# documentation, not application code, and counting it skews the language bar.
+docs/*.html linguist-documentation

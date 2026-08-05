@@ -55,7 +55,7 @@ The intuitive one, and the one most implementations reach for:
 φᵢ = v(N) − v(N \ {i})
 ```
 
-"How much worse is the answer without you?" One regeneration per record, so `n + 1` model calls.
+"How much worse is the answer without you?" One regeneration per player, so `n + 1` model calls.
 
 **It is not an efficient allocation.** `Σφᵢ ≠ v(N)` in general, which means the payouts do not
 exhaust the payment, and the shortfall or excess has to be papered over by normalising — dividing by
@@ -100,12 +100,12 @@ estimator of the Shapley value. It is seeded, so a given query is reproducible.
 Naively, sampling `m` permutations over `n` records costs `m·n` model calls. Two things cut it:
 
 - **Coalition memoisation.** `v(S)` depends only on the *set* `S`, not on the permutation that
-  produced it. Results are cached on `frozenset(record_ids)`. The number of *distinct* coalitions
+  produced it. Results are cached on `frozenset(provider_ids)`. The number of *distinct* coalitions
   reachable is at most `2ⁿ`, so the cache saturates and sampling more permutations becomes nearly
   free.
-- **A bounded player set.** Retrieval returns at most `max_sources` records — **6** by default,
-  which caps a live query at 64 generations. `n` is the only real lever on cost; the estimator is
-  not where savings come from.
+- **A bounded player set.** Retrieval returns at most `max_sources` records — **6** by default — and
+  `n` is the number of *distinct providers* among them, so a live query is capped at 64 generations.
+  `n` is the only real lever on cost; the estimator is not where savings come from.
 
 That second point cuts the other way too, and the implementation says so rather than pretending
 sampling is a free win. **Once sampling has visited most of the coalition space, it has paid for the
@@ -118,6 +118,47 @@ sampling sparsely bought nothing but noise.
 The cost is real and the README states it plainly rather than hiding it. `loo` remains available as
 the cheap engine, documented with the defect above, because showing the two side by side is more
 useful than shipping only the right one.
+
+### 2.4 Where this sits relative to published work
+
+None of the framing is new, and pretending otherwise would be the fastest way to lose a reader who
+knows the area.
+
+**Data Shapley** (Ghorbani & Zou, ICML 2019, [arXiv:1904.02868](https://arxiv.org/abs/1904.02868))
+applies the Shapley value to *training* data, with `v(S)` the performance of a model trained on `S`,
+and motivates it with the same premise this project starts from: that people should be compensated
+for the data they generate. It also establishes, with experiments, that leave-one-out is the weaker
+measure. What changes here is the characteristic function and the player set — `v(S)` is the
+recoverable content of one generated answer rather than validation accuracy, and players are
+providers rather than individual training points, which is what makes a payout invariant to how a
+provider slices its rows.
+
+**ContextCite** (Cohen-Wang et al., NeurIPS 2024,
+[arXiv:2409.00729](https://arxiv.org/abs/2409.00729)) is the closer neighbour in method: it ablates
+context sources and fits a sparse linear surrogate over the ablations, reporting roughly 32 ablations
+even for contexts with hundreds of sources. For deciding *which source supports this sentence* it is
+strictly the better tool, and much cheaper than `2ⁿ`. It is not an allocation. LASSO drives most
+coefficients to exactly zero, and regression weights carry no constraint that they sum to the value
+being divided — both are features for attribution and disqualifying for settlement, where zero means
+a contributor is unpaid and an unconstrained sum means the escrow does not balance.
+
+The cheap-and-approximate direction is real, though, and a production system with large `n` would
+have to take it. The honest statement of scope is that this project buys an exact allocation at
+exponential cost and caps `n` at 6 to afford it.
+
+### 2.5 The demo data is constructed
+
+`sample_data.py` gives `borealis` and `cascade` identical disclosed records so that the redundancy
+case appears in a five-record fixture. That is staging, and it is stated here, in the module
+docstring, and in the README.
+
+It buys a failure that is visible on one screen and reproducible — the offline model is deterministic
+and the sampler is seeded, so `compare` prints identical figures on any machine, which is also what
+lets the integration tests assert exact payouts. It costs generality: this is the minimal instance of
+redundancy rather than a naturally occurring one. The behaviour it demonstrates does not depend on
+the staging. Leave-one-out discounts *any* provider whose contribution is corroborated, in proportion
+to how completely somebody else covers it; total duplication is simply the case where the discount
+reaches 100% and the arithmetic is legible.
 
 ---
 
@@ -140,13 +181,11 @@ makes the whole allocation meaningful. Rescaling against the no-source answer co
 generation per query and restores `v(∅) = 0`, `v(N) = 1` exactly. The null-player test is what caught
 this.
 
-`similarity` is a pluggable protocol so the choice is not baked in:
-
-- **`TokenF1`** (default) — F1 over content-word token sets, stopworded and case-folded.
-  Deterministic, dependency-free, and computable offline, which is what lets the entire test suite
-  exercise the *real* attribution path with no API key.
-- **Embedding-backed cosine** — available when an API key is present, for semantic rather than
-  lexical agreement.
+`similarity` is a pluggable protocol so the choice is not baked in. **One implementation ships**:
+`TokenF1`, F1 over content-word token sets, stopworded and case-folded. It is deterministic,
+dependency-free and computable offline, which is what lets the entire test suite exercise the *real*
+attribution path with no API key. An embedding-backed cosine would slot in behind the same protocol
+and is the obvious next one to write; it is not written, and the engines are indifferent either way.
 
 This is a deliberate, stated limitation. Lexical F1 measures whether the same content survived, not
 whether the *meaning* did. It is adequate for the extractive question-answering this system does —
@@ -201,8 +240,9 @@ exactness is enforced.
   equal credits on every write.
 - **Largest-remainder allocation.** Real-valued weights become integer payouts by Hamilton's
   method: floor each share, then distribute the remaining credits to the largest fractional
-  remainders, ties broken deterministically by record id. This guarantees `Σ payouts == P` exactly —
-  no credits created, none lost to rounding.
+  remainders, ties broken by position in the recipient list, which the marketplace builds in sorted
+  provider order. This guarantees `Σ payouts == P` exactly — no credits created, none lost to
+  rounding.
 
 Invariants, asserted as property-based tests:
 
