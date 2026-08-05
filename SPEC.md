@@ -25,6 +25,14 @@ useful.
 
 Everything below follows from taking the measurement seriously.
 
+It is also not a payment system. Settlement here is a double-entry ledger inside one process and
+credits are integers; there is no chain, no wallet and no external rail. The design assumes such a
+rail exists — the shape it assumes is a network where providers need not trust an operator, payouts
+execute without one, and identities are pseudonymous — and deliberately declines to pick one.
+`ledger.py` is where a real one would attach, and nothing above it would change. What the assumption
+costs is recorded in §7, because pseudonymous identity is exactly what makes the false-name attack
+cheap.
+
 ---
 
 ## 2. The core problem: payout is a cooperative game
@@ -316,6 +324,20 @@ plainly that this is application-enforced and not cryptographic, rather than imp
 The **domain shape** — providers with periodic records, researchers paying per query, payout
 proportional to use — is kept because it makes the attribution problem concrete rather than
 abstract.
+
+### And one it is not built against
+
+Moving the players from records to providers (§2) makes a payout invariant to how a provider slices
+its rows. It does nothing about a provider registering **twice**. Splitting `delta`'s two records
+across two provider accounts raises its combined take from 365 to 446 credits out of 1000 — measured
+on the demo fixture, +22% for no new information.
+
+This is not a bug in the implementation. The Shapley value is not false-name-proof, and no allocation
+computed over self-declared identities can be while a second identity is free. Closing it requires
+something underneath the measurement — identity attestation, staking, or a cost to registering — and
+that is a different problem with a different literature. The honest scope statement is that this
+project solves the split given a trustworthy player set, and does not establish one. The README says
+so in its limitations rather than leaving a reader to find it.
 
 ---
 

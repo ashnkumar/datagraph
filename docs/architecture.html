@@ -162,8 +162,8 @@
 </div>
 
 <div class="conn"><div></div><div class="legs h9">
-  <div class="leg"><span class="glyph">&#9660;</span> <span class="m">v(S)</span> for each coalition of providers</div>
-  <div class="leg"><span class="glyph">&#9650;</span> one weight per provider, summing to <span class="m">v(N)</span></div>
+  <div class="leg"><span class="glyph">&#9660;</span> one score per combination of providers</div>
+  <div class="leg"><span class="glyph">&#9650;</span> one share per provider, adding up to the whole</div>
 </div></div>
 
 <!-- ============ 3+4  ATTRIBUTION / MODEL ============ -->
@@ -174,18 +174,18 @@
       <div class="bt">Attribution<code>attribution.py</code><small>both engines in one file — the contrast is the point</small></div></div>
 
     <div class="eng">
-      <div class="e def"><div class="en">shapley</div><div class="ec">Sampled — 2000 seeded permutations. Efficient <i>exactly</i>, because each permutation's marginals telescope</div></div>
-      <div class="e"><div class="en">exact_shapley</div><div class="ec">All 2<sup>n</sup> coalitions. No variance, and at this n it costs about the same</div></div>
-      <div class="e bad"><div class="en">leave_one_out</div><div class="ec">n + 1 calls. Kept as the counter-example: zeroes redundant providers and needs normalising</div></div>
+      <div class="e def"><div class="en">shapley</div><div class="ec">Estimated by sampling, seeded. Shares still add up to the whole <i>exactly</i>, not just on average</div></div>
+      <div class="e"><div class="en">exact_shapley</div><div class="ec">Every combination, no estimate. No variance, and at this size it costs about the same</div></div>
+      <div class="e bad"><div class="en">leave_one_out</div><div class="ec">One call per provider. Kept as the counter-example: zeroes redundant providers and needs normalising</div></div>
     </div>
 
     <div class="cols2" style="margin-top:11px">
       <div class="card">
-        <div class="clabel">v(S) — memoised on the coalition</div>
+        <div class="clabel">Scoring — cached per combination</div>
         <div class="kv">
-          Players are <b>providers</b>, not records, so the space is <span class="m">2<sup>providers</sup></span>
-          and a payout cannot be inflated by splitting one row into several.
-          <span class="m">v(∅)=0</span>, <span class="m">v(N)=1</span>, rescaled against the no-source answer.
+          Combinations are of <b>providers</b>, not records, so a payout cannot be inflated by splitting
+          one row into several. Scores run from <span class="m">0</span> for no providers to
+          <span class="m">1</span> for all of them, with the boilerplate every answer shares subtracted out.
         </div>
       </div>
       <div class="card">
@@ -200,7 +200,7 @@
 </div>
 
 <div class="conn"><div></div><div class="legs h9" style="justify-content:center">
-  <div class="leg"><span class="glyph">&#9660;</span> weights become whole credits — largest remainder over exact rationals</div>
+  <div class="leg"><span class="glyph">&#9660;</span> shares become whole credits — rounded without losing or inventing one</div>
 </div></div>
 
 <!-- ============ 5/6/7  STATE ============ -->

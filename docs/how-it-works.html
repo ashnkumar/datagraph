@@ -11,7 +11,7 @@
     --screenshot=docs/how-it-works.png "file://$PWD/docs/how-it-works.html"
 
   Every figure here is produced by `datagraph demo --engine exact_shapley` on the
-  seeded fixture. The v(S) values come from the same run.
+  seeded fixture. The per-combination scores come from the same run.
 -->
 <style>
   :root {
@@ -74,7 +74,7 @@
   .row2 { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px;
           font-size: 12px; color: #5c6470; }
 
-  /* the v(S) ladder */
+  /* the per-combination score ladder */
   .vrow {
     display: grid; grid-template-columns: 1fr auto; align-items: center;
     padding: 6px 9px; border-radius: 7px; background: #fff;
@@ -159,23 +159,25 @@
     <div class="ptitle"><div class="num n-b">2</div><div class="pt">What it measures</div></div>
 
     <div class="card" style="margin-bottom:9px">
-      <div class="clabel">Regenerate the answer from every subset of providers</div>
+      <div class="clabel">Re-answer from every combination of providers</div>
       <div class="q" style="font-size:12.4px">
-        <span class="m">v(S)</span> is how much of the full answer survives when only the providers in
-        <span class="m">S</span> are present. Values are memoised on the coalition, so the whole query costs
-        <b>16 model calls</b> — <span class="m">2<sup>4</sup></span>, not <span class="m">2<sup>5</sup></span>,
-        because the players are providers rather than records.
+        Each combination is scored on how much of the full answer it can still produce on its own.
+        Scores are cached per combination, so the whole query costs <b>16 model calls</b> — one for
+        each combination of the four <i>providers</i>, rather than of the five records.
       </div>
     </div>
 
-    <div class="vrow"><span class="lhs">v( &empty; )</span><span class="rhs">0.0000</span></div>
-    <div class="vrow"><span class="lhs">v( {borealis} )</span><span class="rhs">0.6925</span></div>
-    <div class="vrow flag"><span class="lhs">v( {borealis, cascade} )</span><span class="rhs">0.6925</span></div>
-    <div class="vrow"><span class="lhs">v( {aurora, delta} )</span><span class="rhs">0.9211</span></div>
-    <div class="vrow"><span class="lhs">v( all four )</span><span class="rhs">1.0000</span></div>
+    <div class="row2" style="padding:0 9px 3px">
+      <span>answered from</span><span>share of the full answer</span>
+    </div>
+    <div class="vrow"><span class="lhs">nobody</span><span class="rhs">0.0000</span></div>
+    <div class="vrow"><span class="lhs">borealis</span><span class="rhs">0.6925</span></div>
+    <div class="vrow flag"><span class="lhs">borealis + cascade</span><span class="rhs">0.6925</span></div>
+    <div class="vrow"><span class="lhs">aurora + delta</span><span class="rhs">0.9211</span></div>
+    <div class="vrow"><span class="lhs">all four</span><span class="rhs">1.0000</span></div>
 
     <div class="note">
-      <b>Adding <span class="m">cascade</span> to <span class="m">borealis</span> changes the value by exactly zero.</b>
+      <b>Adding <span class="m">cascade</span> to <span class="m">borealis</span> changes the score by exactly zero.</b>
       They disclose identical records, so each one is redundant given the other. That is the whole
       disagreement between the engines, in one line — and it is in the fixture on purpose, because
       redundancy does not arrive on cue.
@@ -207,7 +209,7 @@
     <div class="card">
       <div class="clabel">Why the sums matter</div>
       <div class="q" style="font-size:12.2px">
-        Shapley weights sum to <span class="m">v(N)</span> exactly, so the escrow is exhausted and settlement is
+        Shapley shares add up to the whole payment exactly, so the escrow is exhausted and settlement is
         one balanced transaction. Leave-one-out reaches <span class="m">0.2744</span> and has to be normalised —
         and normalising is what moves <span class="m">borealis</span> and <span class="m">cascade</span>'s credit
         onto whoever happened to be unique.
@@ -215,8 +217,8 @@
     </div>
 
     <div class="foot">
-      Weights become whole credits by largest-remainder apportionment over exact rationals, and the
-      ledger <b>refuses</b> a settlement whose payouts don't exhaust the escrow.
+      Fractional shares become whole credits under a rounding rule that cannot lose or invent one, and
+      the ledger <b>refuses</b> a settlement whose payouts don't exhaust the escrow.
     </div>
   </div>
 

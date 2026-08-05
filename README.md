@@ -1,6 +1,6 @@
 # datagraph
 
-Pay for the data that changed the answer, not the data that showed up.
+**Who gets paid when an AI answers a question?**
 
 [![ci](https://github.com/ashnkumar/datagraph/actions/workflows/ci.yml/badge.svg)](https://github.com/ashnkumar/datagraph/actions/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/downloads/)
@@ -8,10 +8,45 @@ Pay for the data that changed the answer, not the data that showed up.
 
 ![One query, four providers, 1000 credits. Leave-one-out pays borealis and cascade nothing and its weights sum to 0.2744; both Shapley engines split the credit between them and sum to 1.0000.](docs/demo.gif)
 
-One question, four data providers, 1000 credits in escrow, three ways of dividing it. `borealis` and
-`cascade` hold the same fact, so removing either changes nothing and leave-one-out scores both zero —
-their credits go to whoever happened to be unique. That data is constructed to make the failure
-visible; the run is not doctored, and it prints the same table on your machine.
+**The setup.** Independent providers publish datasets. Someone — a person, or an agent acting for
+one — asks a question in plain language. Records are pulled from whichever providers have something
+relevant, a model writes the answer from them, and the asker pays once for that answer.
+
+**The problem.** That one payment now has to be divided among the providers behind it, automatically,
+in the second the query takes. Nobody negotiates a rate per question and nobody reviews an invoice.
+The obvious rule is to split the payment across whoever got retrieved — but that pays for *showing
+up*. A record that changed nothing earns what the record carrying the answer earns, and the way to
+earn more becomes publishing more rows rather than better ones.
+
+**What this does.** `datagraph` measures each provider's contribution by re-answering the question
+from every combination of providers and seeing how much of the answer survives without them, then
+pays each one in proportion to what they actually accounted for. The idea is borrowed from **Data
+Shapley**, which values *training* data by how much each example improves a model and argues that is
+a basis for paying the people who supply it. This applies the same shape to *retrieved* data and a
+single generated answer — what had to change is [further down](#where-the-idea-comes-from).
+
+Get that measurement right and a different kind of marketplace becomes possible: one where a provider
+is paid per answer their data earned rather than per seat or per row, and where holding better data
+beats holding more of it.
+
+## Where this is meant to run
+
+The natural home for this is a decentralised network. Providers there don't have to trust an
+operator, payouts execute without one, and identities are pseudonymous so anyone can join without
+asking — most of what an open data marketplace needs, and awkward to assemble any other way short of
+a trusted middleman.
+Such networks already have data providers and already pay them. What they tend not to have is a
+defensible answer to *how much*. Moving the money is the solved part. Deciding the split is not.
+
+**This repository implements none of that.** There is no chain, no wallet and no token; the "credits"
+are integers in a double-entry ledger that lives in one process. What it implements is the part that
+has to be right before settlement means anything — the measurement, the split, and the accounting
+that proves the split is exact. `ledger.py` is the seam: wiring settlement to a real payment rail is
+a substitution there, and nothing above it changes. Which rail is deliberately none of this project's
+business.
+
+That is the last you will read about it here, with one exception in [Limitations](#limitations),
+where the choice of platform bites.
 
 ## Quickstart
 
@@ -35,33 +70,41 @@ provider's data moved that answer**, and the escrow settles in one transaction.
 | | Paying by retrieval | With datagraph |
 |---|---|---|
 | **Two providers hold the same fact** | Both look equally cited, or under leave-one-out both score zero and their share is silently reassigned | They split the credit — `195` and `203` of 1000 from the sampled engine, `197` each when computed exactly |
-| **Does the payment balance** | Weights don't sum to the whole, so the gap is papered over by normalising | Weights sum to `v(N)` exactly, so the escrow is exhausted with nothing left to redistribute |
+| **Does the payment balance** | Shares don't add up to the whole, so the gap is papered over by normalising | Shares add up to the whole exactly, so the escrow is exhausted with nothing left to redistribute |
 | **Padding your dataset** | More rows returned means more payout | Payout is invariant to row count — 10 extra copies of a record move `delta` by 0 credits |
 | **Hidden fields** | Redaction protects the prompt; the result object still carries the raw row | Raw values never cross the registry boundary, on the answered path or the refused one |
 | **Narrow queries** | A query matching one provider is answered | Refused before the model is called if fewer than 3 providers are behind it |
 
 The obvious alternative is **leave-one-out** — "how much worse is the answer without you?" — and when
-providers hold genuinely disjoint data it is the right choice: `n` model calls instead of `2^n`, and
-with no overlap the two engines rank providers the same way. What it cannot survive is redundancy,
-which is what a marketplace accumulates as providers with similar data join. Two providers supplying
-the same indispensable fact each measure as removable, so both score zero, and because the surviving
-weights don't sum to the payment, normalisation hands their share to somebody else. It fails quietly,
-and quiet is the problem.
+providers hold genuinely disjoint data it is the right choice: one model call per provider instead of
+one per combination, and with no overlap the two engines rank providers the same way. What it cannot
+survive is redundancy, which is what a marketplace accumulates as providers with similar data join.
+Two providers supplying the same indispensable fact each measure as removable, so both score zero,
+and because the surviving shares no longer add up to the payment, normalising hands their credit to
+somebody else. It fails quietly, and quiet is the problem.
+
+**The fixture behind those numbers is constructed.** `borealis` and `cascade` disclose identical
+records on purpose, and `sample_data.py` says so in its docstring. Redundancy does not arrive on cue,
+and staging it buys a failure that is visible on one screen and fires on every run — the offline model
+is deterministic and the sampler is seeded, so `compare` prints the same table on any machine. What it
+costs is that this is the minimal case rather than a natural one. Real overlap is partial, and
+leave-one-out discounts *any* corroborated provider in proportion to how completely somebody else
+covers them.
 
 ## How it works
 
-![Three panels. One: a researcher escrows 1000 credits and asks a question; five records are retrieved and redacted by policy. Two: the answer is regenerated from every subset of providers to measure what each one contributed. Three: the weights become whole credits and the escrow settles.](docs/how-it-works.png)
+![Three panels. One: a researcher escrows 1000 credits and asks a question; five records are retrieved and redacted by policy. Two: the answer is re-generated from every combination of providers to measure what each one contributed, and adding cascade to borealis changes the score by exactly zero. Three: the shares become whole credits and the escrow settles.](docs/how-it-works.png)
 
 - **Redaction precedes the prompt.** Each dataset assigns every field `OPEN`, `DERIVED` (numbers
   banded, dates truncated to the month), or `HIDDEN`. A hidden field is absent from the object the
   prompt builder receives, so there is no prompt-side rule that could leak it. Policies fail closed:
   an unlisted field is hidden, and a `DERIVED` value with no safe coarse form is dropped.
-- **Contribution is measured by regenerating the answer.** `v(S)` is how much of the full answer
-  survives when only the providers in `S` are present, scored against the answer from all of them.
-  Coalition values are memoised, so each subset costs at most one generation per query.
-- **Settlement is one transaction, and it is checked.** Weights become whole credits by
-  largest-remainder apportionment over exact rationals. The ledger refuses a settlement whose payouts
-  don't exhaust the escrow, so an attribution bug fails loudly instead of quietly losing money.
+- **Contribution is measured by regenerating the answer.** Every combination of providers is scored
+  on how much of the full answer it can still produce on its own. Scores are cached per combination,
+  so each one costs at most one generation per query.
+- **Settlement is one transaction, and it is checked.** Fractional shares become whole credits under
+  a rounding rule that cannot lose or invent one. The ledger refuses a settlement whose payouts don't
+  exhaust the escrow, so an attribution bug fails loudly instead of quietly losing money.
 
 ### Architecture
 
@@ -71,7 +114,7 @@ and quiet is the problem.
 |---|---|---|---|
 | **1** | Command line | `cli.py` | The only interface — `demo`, `compare`, `providers` |
 | **2** | Marketplace loop | `marketplace.py` | Escrow, retrieve, redact, check the cohort floor, attribute, settle |
-| **3** | Attribution | `attribution.py` | Both engines and `v(S)`, in one file on purpose |
+| **3** | Attribution | `attribution.py` | Both engines and the scoring, in one file on purpose |
 | **4** | Model | `models.py` | The `ModelClient` protocol, the Anthropic client, the offline stand-in |
 | **5** | Policy | `policy.py` | Disclosure levels, redaction, the cohort floor |
 | **6** | Registry | `registry.py` | Providers, datasets, records, retrieval — SQLite, stdlib only |
@@ -79,58 +122,36 @@ and quiet is the problem.
 
 Start with `src/datagraph/attribution.py`. It holds both engines and it is 337 lines.
 
-## Paying for contribution, not for presence
+## Where the idea comes from
 
-**Dividing one payment among the data behind one answer is a cost-allocation problem, not a ranking
-problem.** Framed as a cooperative game, the players are the providers whose records reached the
-model, `v(S)` is how much of the answer is recoverable from a subset, and each player's payout is
-their share of `v(N)`.
+Machine learning has a well-worn way of asking *which training examples actually made this model
+better*: hold out subsets of the data, retrain, and watch what changes.
+[Data Shapley](https://arxiv.org/abs/1904.02868) (Ghorbani & Zou, 2019) is the version of that idea
+aimed at compensation — value each example by how much it improves the model, and you have a
+principled basis for paying whoever supplied it. The observation that leave-one-out is the weaker
+measure is theirs too, not mine.
 
-That frame is [Data Shapley](https://arxiv.org/abs/1904.02868) (Ghorbani & Zou, ICML 2019), which
-values *training* data by its marginal contribution to a trained model's performance, motivated by
-the same premise — that people should be compensated for the data they generate. This project moves
-the skeleton to *retrieved* data and a single generated answer: `v(S)` is answer similarity rather
-than validation accuracy, and the players are providers rather than training points. The finding that
-leave-one-out is the weaker measure is theirs, not mine.
+It does not transfer directly. Retraining a model per subset is not something that can happen inside
+a single query, and the thing being paid is not a training example but a **provider**, who might have
+contributed one record or fifty. So the shape is borrowed and the internals are different:
 
-The **Shapley value** is the unique allocation satisfying efficiency, symmetry, null player, and
-additivity. Efficiency is the one that makes settlement sound: the weights sum to `v(N)`, so the
-escrow is exhausted with no fudge factor, and providers holding the same fact split the credit
-instead of both being zeroed.
+- Instead of retraining, `datagraph` **re-answers** — it regenerates the answer from a subset of
+  providers and scores how much of the full answer survives.
+- Instead of paying per training point, it **pays per provider**. That is what stops someone earning
+  more by slicing one record into ten. It used to work: with records as players, cloning a row four
+  times moved one provider from 200 to 326 credits out of 600. With providers as players, ten extra
+  copies move the payout by nothing at all.
+- Because the shares are worked out this way, they **always add up to exactly the payment being
+  divided** — which is the property that lets an escrow settle with no leftover and no fudge factor.
 
-Four other designs were tried or considered first:
+The cost is that measuring a provider's contribution properly means scoring every combination of
+them, and that count doubles with each provider added. The default engine estimates it by sampling
+instead of enumerating, and retrieval returns at most six records — so no query has more than six
+providers in play, and the exact engine stays affordable too.
 
-| Rejected | Why |
-|---|---|
-| **Count retrievals** — split the payment across every record returned | Presence in a result set is not contribution. A record that changed nothing earns what the record carrying the answer earns, and adding rows adds income |
-| **Leave-one-out** | Not an efficient allocation — weights sum to `0.2744` of the payment on the demo query. Normalising that gap is what moves redundant providers' credit to unique ones |
-| **A sparse linear surrogate**, as in [ContextCite](https://arxiv.org/abs/2409.00729) (Cohen-Wang et al., NeurIPS 2024) | The right tool for its job and far cheaper — it fits a LASSO surrogate over random source ablations and reports needing about 32 of them where exact Shapley needs `2^n`. But it is built to *cite*, not to *pay*: sparsity drives most sources to exactly zero by design, and regression coefficients carry no constraint that they sum to the whole. Zero means unpaid, and no sum means the escrow does not balance |
-| **Per-record Shapley players** | The Shapley value is not replication-proof. With records as players, one provider split a row into four copies and moved from 200 to 326 credits of 600 for no new information |
-
-Players are therefore **providers**, not records. A coalition names providers and is answered from
-all of that provider's records at once, so duplicating a row changes neither the player set nor any
-coalition's content. It is also cheaper: the coalition space is `2^providers`, not `2^records` — the
-demo went from 32 model calls to 16.
-
-**The cost.** Exact Shapley is `2^n` evaluations. The default engine estimates it by Monte-Carlo
-permutation sampling ([Castro, Gómez & Tejada 2009](https://doi.org/10.1016/j.cor.2008.04.004)) —
-sample random arrival orders, average each player's marginal contribution. Because every
-permutation's marginals telescope to `v(N) − v(∅)`, **the estimator is efficient exactly, not just in
-expectation**: sampling moves credit between players but never creates or destroys any. With
-memoisation and a six-provider cap, sampling ends up visiting most of the coalition space anyway, so
-`--engine exact_shapley` costs about the same here and has no variance.
-
-**The demo data is built to make this visible, and the construction is the argument.** `borealis` and
-`cascade` disclose identical records because `sample_data.py` was written that way, and its docstring
-says so. Redundancy does not arrive on cue, so a demo that waits for it is not a demo. What the
-staging buys is a failure you can see in one screen that fires on every run — the offline model is
-deterministic and the permutation sampler is seeded, so `compare` prints the table above on any
-machine. What it costs is that this is the minimal case rather than a natural one. Real overlap is
-partial rather than total, and leave-one-out's discount applies to *any* corroborated provider, not
-only perfectly duplicated ones: the more of your contribution somebody else also covers, the less
-removing you changes, and the less you are paid.
-
-`SPEC.md` has the derivation, the data model, and every design revision with the test that forced it.
+`SPEC.md` has the formal version of all of this — the derivation, the sampling method and its
+citation, the alternatives that were rejected and why, and every design revision with the test that
+forced it.
 
 ## Commands
 
@@ -153,26 +174,30 @@ uv run pytest            # 122 tests, offline, no API key
 uv run pytest -m live    # one end-to-end test against the real API
 ```
 
-The engines are tested against synthetic cooperative games with known closed-form Shapley values, so
-the assertions check the mathematics rather than a model's mood — read `tests/test_attribution.py`
-first. Efficiency, symmetry and null-player are asserted, which is what a stubbed engine fails.
+The engines are tested against small synthetic games whose correct answers are known in closed form,
+so the assertions check the mathematics rather than a model's mood — read `tests/test_attribution.py`
+first. Identical contributors being paid identically, a contributor who changes nothing being paid
+zero, and the shares adding up to the whole are all asserted, which is what a stubbed engine fails.
 
 ## Limitations
 
 - **Replication-proof against rows, not against identities.** Cloning a record earns nothing — 10
   extra copies move `delta` by 0 credits. Registering twice does: splitting `delta`'s two records
   across two provider accounts raised its combined take from 365 to 446 credits of 1000. Nothing here
-  verifies that two providers are different people, and the Shapley value is not false-name-proof.
+  verifies that two providers are different people. This is the exception promised at the top — the
+  pseudonymous network that makes the rest of this natural is also the environment where a second
+  identity is free, so a real deployment needs identity or stake sitting underneath the measurement.
 - **`--live` sends the disclosed projection to a third party.** The privacy argument is about what
   leaves the provider's record, and `OPEN` and `DERIVED` values leave the machine entirely on a live
   run. The offline model exists partly so the whole system can be exercised without that happening.
-- **`v(S)` is a proxy.** The default similarity is F1 over content words, so it measures whether the
-  same *content* survived, not whether the same *meaning* did. `Similarity` is a protocol with one
-  shipped implementation; nothing in the engines changes if you write another.
+- **The contribution score is a proxy.** The default measure is F1 over content words, so it captures
+  whether the same *content* survived, not whether the same *meaning* did. `Similarity` is a protocol
+  with one shipped implementation; nothing in the engines changes if you write another.
 - **Generation is not deterministic on the live path.** The API rejects `temperature`, `top_p` and
   `top_k` on current models — `400 "temperature is deprecated for this model"` — so two identical
-  calls can differ. Coalition values are memoised, so comparison *within* a query is self-consistent;
-  across queries it is not. The offline model has no such problem, which is why it is the default.
+  calls can differ. Scores are cached per combination, so comparison *within* a query is
+  self-consistent; across queries it is not. The offline model has no such problem, which is why it
+  is the default.
 - **Privacy is procedural, not cryptographic.** An operator with database access reads raw records —
   the store keeps `HIDDEN` fields in cleartext SQLite — and a compromised process bypasses redaction.
   Real guarantees need the raw values never to reach this tier: trusted execution, secure aggregation,
