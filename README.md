@@ -1,6 +1,6 @@
 # datagraph
 
-The royalty split for an AI answer.
+Royalty splits for AI answers
 
 [![ci](https://github.com/ashnkumar/datagraph/actions/workflows/ci.yml/badge.svg)](https://github.com/ashnkumar/datagraph/actions/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/downloads/)
