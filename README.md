@@ -149,6 +149,14 @@ them, and that count doubles with each provider added. The default engine estima
 instead of enumerating, and retrieval returns at most six records — so no query has more than six
 providers in play, and the exact engine stays affordable too.
 
+A cheaper route exists, and it is worth knowing why it isn't taken here.
+[ContextCite](https://arxiv.org/abs/2409.00729) (Cohen-Wang et al., 2024) attributes a generated
+answer to its sources by fitting a sparse linear model over a few dozen ablations rather than
+scoring every combination, and for deciding *which source backs this sentence* it is the better
+tool. It is not a way to divide a payment. It drives most coefficients to exactly zero, and
+regression weights carry no constraint that they add up to the amount being split — both useful for
+attribution, disqualifying for settlement.
+
 `SPEC.md` has the formal version of all of this — the derivation, the sampling method and its
 citation, the alternatives that were rejected and why, and every design revision with the test that
 forced it.
