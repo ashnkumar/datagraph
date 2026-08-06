@@ -1,6 +1,6 @@
 # datagraph
 
-**Who gets paid when an AI answers a question?**
+The royalty split for an AI answer.
 
 [![ci](https://github.com/ashnkumar/datagraph/actions/workflows/ci.yml/badge.svg)](https://github.com/ashnkumar/datagraph/actions/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/downloads/)
