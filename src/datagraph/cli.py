@@ -142,7 +142,7 @@ def _report(result: QueryResult, market: Marketplace, console: Console) -> None:
             + (
                 "[green]efficient: the payment is fully accounted for.[/green]"
                 if efficient
-                else "[red]not efficient: the shortfall was redistributed by normalisation.[/red]"
+                else "[red]not efficient: the shortfall was redistributed by normalization.[/red]"
             )
             + "[/dim]"
         )

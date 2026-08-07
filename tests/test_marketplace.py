@@ -16,7 +16,7 @@ PAYMENT = 1000
 def market():
     registry = seed_demo(Registry())
     ledger = Ledger()
-    # Default permutation count: memoisation caps model calls at 2^n regardless, so there is
+    # Default permutation count: memoization caps model calls at 2^n regardless, so there is
     # no reason to sample sparsely and inherit the variance.
     mkt = Marketplace(registry, ledger, FakeModel(), seed=11)
     mkt.fund_researcher("rachel", 100_000)
@@ -96,7 +96,7 @@ def test_derived_fields_reach_the_model_only_as_bands(market):
 
 
 def test_redundant_providers_are_paid_equally_and_not_zero(market):
-    """The headline behaviour, through the real loop.
+    """The headline behavior, through the real loop.
 
     'borealis' and 'cascade' disclose identical records. Under leave-one-out they would each
     score zero. Under Shapley they split the credit for the fact they jointly supply, and
@@ -146,7 +146,7 @@ def test_leave_one_out_pays_redundant_providers_nothing_and_reassigns_their_shar
 
     Leave-one-out does not fail loudly here — it fails *quietly*, which is worse. The two
     providers holding corroborated data score exactly zero, and because the weights have to be
-    normalised to settle the payment, the credits they should have earned are silently handed
+    normalized to settle the payment, the credits they should have earned are silently handed
     to the providers whose data happened to be unique.
     """
     market.engine = "leave_one_out"
@@ -282,7 +282,7 @@ def test_repeated_queries_are_reproducible(market):
     assert a.payouts == b.payouts
 
 
-def test_memoisation_keeps_the_call_count_at_the_coalition_bound(market):
+def test_memoization_keeps_the_call_count_at_the_coalition_bound(market):
     result = market.query("rachel", DEMO_QUESTION, PAYMENT)
     n = len(result.sources)
 

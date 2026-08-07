@@ -29,7 +29,7 @@ def allocate(total: int, weights: Sequence[float]) -> list[int]:
     leftover credits one at a time to the largest fractional remainders. Ties are broken by
     index, so the result is deterministic for a given input.
 
-    Two edge cases have deliberate, documented behaviour:
+    Two edge cases have deliberate, documented behavior:
 
     * **All weights zero** — splits equally. This is the natural limit and it preserves the sum
       invariant, but it is rarely the right *policy*: if nothing contributed, nobody has earned

@@ -75,7 +75,7 @@ def test_zero_weight_earns_nothing():
 
 
 def test_all_zero_weights_split_equally():
-    # Documented limit behaviour. Callers that care about the *policy* must check first —
+    # Documented limit behavior. Callers that care about the *policy* must check first —
     # see test_marketplace.py for the refund path this exists to make visible.
     assert allocate(99, [0, 0, 0]) == [33, 33, 33]
 

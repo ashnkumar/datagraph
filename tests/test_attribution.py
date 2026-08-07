@@ -1,7 +1,7 @@
 """Tests for the attribution engines.
 
 Most of these run against synthetic characteristic functions with known closed-form Shapley
-values, so they check the mathematics rather than a model's behaviour. The last section wires
+values, so they check the mathematics rather than a model's behavior. The last section wires
 the real path together with the deterministic FakeModel.
 """
 
@@ -131,7 +131,7 @@ def test_leave_one_out_is_not_efficient_on_redundant_sources():
 
 
 def test_leave_one_out_collapses_entirely_when_everything_is_redundant():
-    """All weights zero, so normalising divides by zero — there is no payout to compute."""
+    """All weights zero, so normalizing divides by zero — there is no payout to compute."""
     v = fully_redundant()
     loo = leave_one_out(["a", "b"], v)
 
@@ -154,7 +154,7 @@ def test_both_engines_agree_when_contributions_are_independent():
     assert loo.is_efficient
 
 
-# --- estimator behaviour --------------------------------------------------------------------
+# --- estimator behavior --------------------------------------------------------------------
 
 
 def test_sampled_shapley_converges_to_the_exact_value():
@@ -259,7 +259,7 @@ def test_coalition_value_defines_the_empty_set_as_zero():
     assert v(frozenset({"s1", "s2"})) == pytest.approx(1.0)
 
 
-def test_coalition_value_memoises_so_each_subset_costs_one_call():
+def test_coalition_value_memoizes_so_each_subset_costs_one_call():
     sources = [StubSource(f"s{i}", f"field{i}: value{i}") for i in range(3)]
     v = CoalitionValue(question="what do the records show?", sources=sources, model=FakeModel())
 

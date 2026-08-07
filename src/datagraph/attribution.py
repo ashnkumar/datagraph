@@ -7,7 +7,7 @@ as a cooperative game:
   records, because the Shapley value is not replication-proof and per-record players let a
   provider inflate its cut by cloning a row (see :class:`CoalitionValue`),
 * the **characteristic function** ``v(S)`` is how much of the full answer is recoverable from
-  the subset ``S``, normalised so ``v(∅) = 0`` and ``v(N) = 1``,
+  the subset ``S``, normalized so ``v(∅) = 0`` and ``v(N) = 1``,
 * the **payout** is each player's share of ``v(N)``.
 
 Two engines are implemented against that frame, and the contrast between them is the point of
@@ -20,7 +20,7 @@ removing either changes nothing, so both score zero and the money has nowhere to
 
 ``shapley`` is the unique allocation satisfying efficiency, symmetry, null player, and
 additivity. Efficiency is what makes settlement sound — the weights sum to ``v(N)`` exactly,
-so the escrow is exhausted with no normalisation fudge, and redundant providers split the
+so the escrow is exhausted with no normalization fudge, and redundant providers split the
 credit for the fact they jointly supply instead of both being zeroed.
 
 Estimation follows Castro, Gómez & Tejada (2009), *Computers & Operations Research* 36(5),
@@ -141,7 +141,7 @@ class CoalitionValue:
     It is also cheaper. The coalition space is ``2^providers`` rather than ``2^records``, and
     providers are never more numerous than their records.
 
-    Memoised on the coalition, because ``v(S)`` depends only on the *set* — the same subset
+    Memoized on the coalition, because ``v(S)`` depends only on the *set* — the same subset
     reached by two different permutations costs one model call, not two.
     """
 
@@ -162,7 +162,7 @@ class CoalitionValue:
 
     @property
     def calls(self) -> int:
-        """Model calls made. Distinct coalitions evaluated, thanks to memoisation."""
+        """Model calls made. Distinct coalitions evaluated, thanks to memoization."""
         return self._calls
 
     @property
@@ -258,7 +258,7 @@ def shapley(
         players: Source ids.
         value: The characteristic function.
         permutations: Random orders to sample. More reduces variance between players.
-            The default is high because memoisation makes it nearly free: distinct coalitions
+            The default is high because memoization makes it nearly free: distinct coalitions
             are bounded by 2^n, so past the point where the cache saturates, extra
             permutations cost dictionary lookups rather than model calls.
         seed: Seed for the permutation sampler.

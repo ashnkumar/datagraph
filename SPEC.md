@@ -66,7 +66,7 @@ The intuitive one, and the one most implementations reach for:
 "How much worse is the answer without you?" One regeneration per player, so `n + 1` model calls.
 
 **It is not an efficient allocation.** `Σφᵢ ≠ v(N)` in general, which means the payouts do not
-exhaust the payment, and the shortfall or excess has to be papered over by normalising — dividing by
+exhaust the payment, and the shortfall or excess has to be papered over by normalizing — dividing by
 `Σφᵢ`.
 
 The failure is not academic. It is the **redundancy case**, and it is the common case in a data
@@ -75,7 +75,7 @@ marketplace, because marketplaces accumulate providers with overlapping data:
 > Two providers each supply the same fact. Remove either one and the answer is unchanged, because the
 > other still supplies it. So `φ₁ = φ₂ = 0`. Both providers earn nothing, despite the answer
 > depending entirely on a fact only they supplied. If *every* record is redundant, `Σφᵢ = 0` and the
-> normalisation divides by zero.
+> normalization divides by zero.
 
 A marketplace that pays by leave-one-out systematically underpays exactly the providers whose data
 is well-corroborated, and it loses money into a rounding gap it cannot account for.
@@ -94,7 +94,7 @@ Equivalently, and this is the form implemented: the expected marginal contributi
 uniformly random arrival order.
 
 Efficiency is not a nicety here — it is the property that makes settlement sound. Because
-`Σφᵢ = v(N)` exactly, the escrow is exhausted with no normalisation fudge, and the redundancy case
+`Σφᵢ = v(N)` exactly, the escrow is exhausted with no normalization fudge, and the redundancy case
 resolves correctly: two providers supplying the same indispensable fact split its credit, rather
 than both being zeroed.
 
@@ -107,7 +107,7 @@ estimator of the Shapley value. It is seeded, so a given query is reproducible.
 
 Naively, sampling `m` permutations over `n` records costs `m·n` model calls. Two things cut it:
 
-- **Coalition memoisation.** `v(S)` depends only on the *set* `S`, not on the permutation that
+- **Coalition memoization.** `v(S)` depends only on the *set* `S`, not on the permutation that
   produced it. Results are cached on `frozenset(provider_ids)`. The number of *distinct* coalitions
   reachable is at most `2ⁿ`, so the cache saturates and sampling more permutations becomes nearly
   free.
@@ -163,7 +163,7 @@ docstring, and in the README.
 It buys a failure that is visible on one screen and reproducible — the offline model is deterministic
 and the sampler is seeded, so `compare` prints identical figures on any machine, which is also what
 lets the integration tests assert exact payouts. It costs generality: this is the minimal instance of
-redundancy rather than a naturally occurring one. The behaviour it demonstrates does not depend on
+redundancy rather than a naturally occurring one. The behavior it demonstrates does not depend on
 the staging. Leave-one-out discounts *any* provider whose contribution is corroborated, in proportion
 to how completely somebody else covers it; total duplication is simply the case where the discount
 reaches 100% and the arithmetic is legible.
@@ -296,7 +296,7 @@ attribution code rather than mocking past it.
 Answers are generated with thinking disabled at low effort. The task is short extractive work
 repeated up to `2^n` times per query, so depth buys nothing and costs a great deal. Requests opt
 into server-side refusal fallbacks by default, and fall back to a plain request once if that beta
-is not available to the caller's organisation.
+is not available to the caller's organization.
 
 ---
 
@@ -370,10 +370,10 @@ out because the reasoning is more useful than the conclusion:
 1. **The `v(S)` floor** (§3) — added because the null-player test failed. Shared boilerplate was
    being paid out as contribution.
 2. **Permutation count and source cap** (§2.3) — the first draft sampled sparsely to save money.
-   Memoisation means it was saving nothing and paying for it in variance.
+   Memoization means it was saving nothing and paying for it in variance.
 3. **What leave-one-out actually does on redundant data** (§2.1) — the expectation was that it would
    collapse loudly, all weights zero, and force a refund. On realistic data it does something worse:
-   it zeroes only the corroborated providers and normalisation silently reassigns their credits to
+   it zeroes only the corroborated providers and normalization silently reassigns their credits to
    whoever happened to be unique. The integration test asserts the quiet failure, because that is
    the one a marketplace would actually ship.
 

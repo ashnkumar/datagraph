@@ -1,15 +1,20 @@
 """Answer generation: the Anthropic client, and a deterministic stand-in for tests.
 
 Attribution works by regenerating the answer from many different subsets of the retrieved
-records, so this interface is called a lot — up to 2^n times per query before memoisation.
-Everything here is shaped by that: short answers, low effort, no thinking.
+records, so this interface is called a lot — up to 2^n times per query before memoization.
+Everything here is shaped by that: short answers and low effort.
 
-**A note on determinism.** ``temperature`` is not accepted on current Claude models, so two
-calls with identical inputs may return different text. That is a real source of noise in a
-measurement built on comparing regenerated answers. Two things keep it bounded: coalition
-values are memoised, so each distinct subset is generated exactly once per query and the
-comparison within a query is self-consistent; and :class:`FakeModel` is exactly deterministic,
-so the test suite measures the attribution mathematics rather than model variance.
+**A note on determinism.** There is no way to ask for it. Setting ``temperature``, ``top_p``
+or ``top_k`` to any non-default value returns a 400 on this model, there is no ``seed``
+parameter, and Anthropic's migration guide notes that ``temperature = 0`` "never guaranteed
+identical outputs on prior models" either. So two calls with identical inputs may return
+different text, and that is a real source of noise in a measurement built on comparing
+regenerated answers.
+
+Two things bound it instead of pretending it away: coalition values are memoized, so each
+distinct subset is generated exactly once per query and every comparison within a query is
+against a fixed set of strings; and :class:`FakeModel` is exactly deterministic, so the test
+suite measures the attribution mathematics rather than model variance.
 """
 
 from __future__ import annotations
@@ -41,9 +46,16 @@ knowing which record produced which claim.
 
 Do not include internal or system XML tags in your response.\
 """
+# That last sentence is the third clause of Anthropic's documented mitigation for running with
+# thinking disabled, kept because disabling is one line away. The first two clauses are about
+# tool calls and this workload has no tools, so they are omitted. It is deliberately generic:
+# "Instructions that call out thinking tags by name are less effective than the general form."
+# Note also what is *absent* — no instruction telling the model not to think or not to reason,
+# because per the same page "that kind of instruction increases tag leakage."
 
-# Defence in depth for the tag instruction above: leaked internal tags would show up as
-# spurious tokens in the similarity measure and skew every influence score in the query.
+# Defense in depth behind the instruction above and the adaptive-thinking default. A leaked
+# internal tag would be spurious tokens in the similarity measure, and would therefore skew
+# every provider's share in the query — the failure is a wrong payout, not an ugly answer.
 _INTERNAL_TAG = re.compile(r"</?(?:thinking|internal|scratchpad)[^>]*>", re.IGNORECASE)
 
 
@@ -129,12 +141,17 @@ class AnthropicModel:
             omitted.
         model: Model id. Defaults to :data:`DEFAULT_MODEL`.
         effort: Reasoning effort. ``"low"`` suits this workload — the task is extraction from
-            a short record list, and the call is repeated many times per query.
-        max_tokens: Output cap. Answers are capped at three sentences by the system prompt.
-        use_fallbacks: Opt into server-side refusal fallbacks, so a declined request is
-            re-run on another model inside the same call. Enabled by default. If the beta is
-            not available to your organisation the first call falls back to a plain request
-            and logs nothing further.
+            a short record list, and the call is repeated many times per query. This is the
+            cost lever, in place of disabling thinking.
+        max_tokens: Output cap. Answers are capped at three sentences by the system prompt,
+            but this has to leave room for thinking too: ``max_tokens`` is a hard cap on
+            "total output for the request, thinking and response text combined."
+        use_fallbacks: Opt into server-side refusal fallbacks, so a request declined by a
+            safety classifier is re-run on the model Anthropic recommends for that refusal
+            category, inside the same call. Enabled by default. The feature is in beta and is
+            unavailable on the Batches API and on the cloud-provider platforms, so if the
+            request is rejected for it, the first call drops it and carries on unprotected
+            rather than failing the whole query.
     """
 
     def __init__(
@@ -160,9 +177,15 @@ class AnthropicModel:
         request: dict[str, Any] = {
             "model": self._model,
             "max_tokens": self._max_tokens,
-            # Thinking off, low effort: this is short extractive work repeated many times.
-            # Disabling thinking is permitted at effort "high" or below.
-            "thinking": {"type": "disabled"},
+            # Thinking stays on and cost is controlled with effort instead, which is what
+            # Anthropic recommends: "for most tasks, thinking enabled at `low` effort performs
+            # better than thinking disabled at similar cost". Disabling it is what makes the
+            # model "occasionally emit tool calls as plain text or include internal XML tags
+            # in its visible output" — and the visible output is the measurement here, so a
+            # leaked tag is spurious tokens in a similarity score and a wrong payout.
+            # `display: omitted` is already the default on this model; it is set explicitly
+            # because it is load-bearing: thinking text must never reach the scored string.
+            "thinking": {"type": "adaptive", "display": "omitted"},
             "output_config": {"effort": self._effort},
             "system": SYSTEM_PROMPT,
             "messages": [{"role": "user", "content": build_prompt(question, sources)}],
@@ -193,8 +216,8 @@ class AnthropicModel:
                 fallbacks="default",
             )
         except Exception as exc:
-            # The fallbacks beta is gated per organisation. If it is unavailable, drop it once
-            # and carry on unprotected rather than failing the whole query.
+            # The beta is not available everywhere the API is. If this deployment rejects it,
+            # drop it once and carry on unprotected rather than failing the whole query.
             if "fallback" not in str(exc).lower():
                 raise
             self._use_fallbacks = False
