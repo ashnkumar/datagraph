@@ -62,27 +62,16 @@ providers the same way.
 
 ![Three panels. One: a researcher escrows 1000 credits and asks a question; five records are retrieved and redacted by policy. Two: the answer is re-generated from every combination of providers to measure what each one contributed, and adding cascade to borealis changes the score by exactly zero. Three: the shares become whole credits and the escrow settles.](docs/how-it-works.png)
 
-- **Redaction precedes the prompt.** Each dataset assigns every field `OPEN`, `DERIVED` (numbers
-  banded, dates truncated to the month), or `HIDDEN`. A hidden field is absent from the object the
-  prompt builder receives, so no prompt-side rule could leak it. Policies fail closed: an unlisted
-  field is hidden, and a `DERIVED` value with no safe coarse form is dropped.
-- **Contribution is measured by regenerating the answer.** Every combination of providers is scored
-  on how much of the full answer it can still produce alone. Combinations double with each provider
-  added, so retrieval caps a query at six providers and `2^6 = 64` generations; every combination is
-  scored once and cached, which is why sampling 2000 orderings and enumerating all 16 combinations
-  cost the same 16 model calls on the demo query.
-- **A query needs a crowd.** Fewer than three providers behind it and it is refused before the model
-  is called, so nobody can narrow a query until one provider is the whole answer.
-- **Settlement is one transaction, and it is checked.** Fractional shares become whole credits under
-  a rounding rule that cannot lose or invent one, and the ledger refuses a settlement whose payouts
-  don't exhaust the escrow. An attribution bug fails loudly instead of quietly losing money.
+**Retrieve and redact.** Every field is `OPEN`, `DERIVED` (banded) or `HIDDEN`. Hidden fields never
+reach the prompt builder, and anything unlisted is hidden by default. A query with fewer than three
+providers behind it is refused before the model runs.
 
-**There is no blockchain here.** Credits are integers in an ordinary double-entry ledger, and
-"escrow" and "settlement" mean what they mean in accounting — money held, then moved in one
-transaction that has to balance. `ledger.py` is the seam where a real payment rail goes, and it does
-not care which one: a payment processor works, and so does a chain. The one place a chain earns its
-keep is the identity problem in [Limitations](#limitations) — the split is only as honest as the
-claim that two accounts are two people, and stake is one way to make lying about that expensive.
+**Score by re-answering.** Each combination of providers is scored on how much of the answer it can
+produce alone, then cached. Retrieval caps a query at six providers, so sampling 2000 orderings and
+enumerating all 16 combinations cost the same 16 model calls.
+
+**Settle once.** Fractional shares become whole credits under a rounding rule that can't lose or
+invent one, and the ledger refuses any settlement that doesn't exhaust the escrow.
 
 ### Architecture
 
