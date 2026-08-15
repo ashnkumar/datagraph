@@ -88,8 +88,8 @@ invent one, and the ledger refuses any settlement that doesn't exhaust the escro
 | **7** | Money | `ledger.py`, `money.py` | Double-entry accounts with escrow; integer credits and apportionment |
 
 Start with `src/datagraph/attribution.py`. It holds both engines and it is 337 lines. `SPEC.md` has
-the formal version — the derivation, the rejected alternatives, and every design revision with the
-test that forced it.
+the design notes — how the split is computed, the rejected alternatives, and every design revision
+with the test that forced it.
 
 ## Commands
 
