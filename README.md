@@ -8,10 +8,10 @@ Royalty splits for AI answers, measured from the answer itself.
 
 ![One query, four providers, 1000 credits. Leave-one-out pays borealis and cascade nothing and its weights sum to 0.2744; both Shapley engines split the credit between them and sum to 1.0000.](docs/demo.gif)
 
-One query, four providers, 1000 credits, three ways of splitting it. `borealis` and `cascade` hold
-the same fact, and the two red zeros are what the obvious method pays them for it. Its weights come
-to `0.2744` of the payment, so the rest goes to whoever happened to be unique. The seeded fixture
-makes this fire on every run — see [Limitations](#limitations).
+One query, four providers, 1000 credits, three ways of splitting it. `borealis` and `cascade` are
+seeded with the same fact on purpose, and the two red zeros are what the obvious method pays them
+for it. Its weights come to `0.2744` of the payment, so the rest goes to whoever happened to be
+unique.
 
 *See the **[technical post](https://example.com/datagraph-technical-post)** for more details.*
 
@@ -33,23 +33,20 @@ what redaction removed, the answer, and who got paid.
 
 ## The problem
 
-You run a marketplace where independent providers publish datasets. Someone asks a question, records
-come back from whoever holds something relevant, a model writes one answer, and the asker pays once.
-Now split that payment.
+Retrieval-augmented generation has a payment problem. A model answers a question using records
+retrieved from several data providers, the asker pays once for that answer, and something has to
+decide how much of that payment each provider earned.
 
-Paying whoever got retrieved is the first thing anyone tries, and it pays for showing up: a record
-that changed nothing earns what the record carrying the answer earns. The way to earn more becomes
-publishing more rows, not better ones.
+Paying whoever got retrieved is the obvious move, and it pays for showing up: a record that changed
+nothing earns what the record carrying the answer earns. The way to earn more becomes publishing
+more rows, not better ones.
 
-The better question is what each provider was worth — take one away and see what changes. That works
-until two providers hold the same fact. Remove either and nothing changes, so both measure as
-worthless, the shares left no longer add up to the payment, and closing that gap means scaling the
-survivors to fit. The money those two earned goes to whoever happened to be the only source of
-something.
+The better question is what each provider was worth — take one away and see what changes. That
+works until two providers hold the same fact. Remove either and nothing changes, so both measure as
+worthless, and the shares that are left no longer add up to the payment.
 
 **`datagraph` divides the payment by how much each provider's data actually changed the answer, in
-shares that add up to the whole by construction rather than by being scaled to fit.** It costs model
-calls to do that — the ceiling is bounded and [spelled out below](#where-the-idea-comes-from).
+shares that add up to the whole by construction rather than by being scaled to fit.**
 
 | | Paying by retrieval | With `datagraph` |
 |---|---|---|
@@ -70,13 +67,22 @@ providers the same way.
   prompt builder receives, so no prompt-side rule could leak it. Policies fail closed: an unlisted
   field is hidden, and a `DERIVED` value with no safe coarse form is dropped.
 - **Contribution is measured by regenerating the answer.** Every combination of providers is scored
-  on how much of the full answer it can still produce alone. Scores are cached per combination, so
-  each costs at most one generation per query.
+  on how much of the full answer it can still produce alone. Combinations double with each provider
+  added, so retrieval caps a query at six providers and `2^6 = 64` generations; every combination is
+  scored once and cached, which is why sampling 2000 orderings and enumerating all 16 combinations
+  cost the same 16 model calls on the demo query.
 - **A query needs a crowd.** Fewer than three providers behind it and it is refused before the model
   is called, so nobody can narrow a query until one provider is the whole answer.
 - **Settlement is one transaction, and it is checked.** Fractional shares become whole credits under
   a rounding rule that cannot lose or invent one, and the ledger refuses a settlement whose payouts
   don't exhaust the escrow. An attribution bug fails loudly instead of quietly losing money.
+
+**There is no blockchain here.** Credits are integers in an ordinary double-entry ledger, and
+"escrow" and "settlement" mean what they mean in accounting — money held, then moved in one
+transaction that has to balance. `ledger.py` is the seam where a real payment rail goes, and it does
+not care which one: a payment processor works, and so does a chain. The one place a chain earns its
+keep is the identity problem in [Limitations](#limitations) — the split is only as honest as the
+claim that two accounts are two people, and stake is one way to make lying about that expensive.
 
 ### Architecture
 
@@ -92,39 +98,9 @@ providers the same way.
 | **6** | Registry | `registry.py` | Providers, datasets, records, retrieval — SQLite, stdlib only |
 | **7** | Money | `ledger.py`, `money.py` | Double-entry accounts with escrow; integer credits and apportionment |
 
-Start with `src/datagraph/attribution.py`. It holds both engines and it is 337 lines.
-
-## Where the idea comes from
-
-Machine learning has a well-worn way of asking *which training examples actually made this model
-better*: hold out subsets, retrain, watch what changes. [Data
-Shapley](https://arxiv.org/abs/1904.02868) (Ghorbani & Zou, 2019) aims that at compensation — value
-each example by how much it improves the model, and you have a principled basis for paying whoever
-supplied it. The observation that leave-one-out is the weaker measure is theirs.
-
-It does not transfer directly. Retraining per subset cannot happen inside one query, and the thing
-being paid is a **provider**, who might have contributed one record or fifty. So the shape is
-borrowed and the internals differ. Instead of retraining, `datagraph` re-answers: it regenerates the
-answer from a subset of providers and scores how much of the full answer survives. Instead of paying
-per training point, it pays per provider — which is what stops someone earning more by slicing one
-record into ten. With records as players it worked: cloning one of `delta`'s two records four times
-took it from `446` to `612` credits of 1000, a 37% raise for publishing nothing new. Working the
-shares out per provider is also what makes them sum to exactly the payment being divided, which is
-what lets an escrow settle with no leftover and no scaling step.
-
-The cost is that scoring every combination doubles with each provider added. Two things bound it.
-Retrieval returns at most six records, so no query has more than six providers in play and `2^6 = 64`
-generations is the worst case; and every combination is scored once and cached, which is why sampling
-2000 orderings and enumerating all 16 combinations cost the same 16 model calls on the demo query.
-
-A cheaper route exists, and it is worth knowing why it isn't taken.
-[ContextCite](https://arxiv.org/abs/2409.00729) (Cohen-Wang et al., 2024) attributes an answer to its
-sources by fitting a sparse linear model over a few dozen ablations, and for *which source backs this
-sentence* it is the better tool. It cannot divide a payment: it drives most coefficients to exactly
-zero, and regression weights carry no constraint that they sum to the amount being split.
-
-`SPEC.md` has the formal version — the derivation, the sampling method and its citation, the rejected
-alternatives, and every design revision with the test that forced it.
+Start with `src/datagraph/attribution.py`. It holds both engines and it is 337 lines. `SPEC.md` has
+the formal version — the derivation, the rejected alternatives, and every design revision with the
+test that forced it.
 
 ## Commands
 
@@ -154,33 +130,22 @@ there, including the line count two sections up.
 
 ## Limitations
 
-- **Replication-proof against rows, not against identities.** Ten extra copies of every record
-  `delta` holds move its payout by 0 credits. Registering twice does: splitting `delta`'s two records
-  across two accounts took its combined take from `365` to `446` of 1000 — exactly what
-  records-as-players paid it in the first place. Paying per provider charges an identity for the
-  record-level attack rather than removing it, and nothing here verifies that two providers are
-  different people. A real deployment needs identity or stake underneath the measurement.
-- **The demo's redundancy is staged.** `borealis` and `cascade` disclose identical records on
-  purpose, and `sample_data.py` says so in its docstring. Real overlap is partial; total duplication
-  is where the discount reaches 100% and the arithmetic is legible on one screen. The behavior
-  doesn't depend on the staging — leave-one-out discounts *any* corroborated provider in proportion
-  to how completely somebody else covers them.
-- **Generation is not deterministic on the live path, and cannot be made so.** Any non-default
-  `temperature`, `top_p` or `top_k` returns a 400, there is no `seed` parameter, and Anthropic's
-  migration guidance notes `temperature = 0` never guaranteed identical outputs anyway. Scores are
-  cached per combination, so comparison *within* a query is self-consistent and across queries it is
-  not. The offline model has no such problem, which is why it is the default.
-- **Privacy is procedural, not cryptographic.** An operator with database access reads raw records —
-  `HIDDEN` fields sit in cleartext SQLite — and a compromised process bypasses redaction. Real
-  guarantees need the raw values never to reach this tier: trusted execution, secure aggregation, or
-  local differential privacy. Running `--live` also sends the disclosed projection to a third party,
-  which is the offline model's other reason for existing.
+- **It counts accounts, not people.** Extra copies of a record earn nothing, but registering twice
+  does: splitting `delta`'s two records across two accounts took its combined take
+  from `365` to `446` of 1000. Nothing here checks that two providers are different people. The fix
+  is identity or stake underneath the measurement, not a change to the scoring.
+- **Privacy is procedural, not cryptographic.** Redaction happens before the prompt is built, so no
+  prompt-side rule can leak a hidden field — but `HIDDEN` values sit in cleartext SQLite, and an
+  operator with database access reads them. Real guarantees need the raw values never to reach this
+  tier: trusted execution, secure aggregation, or differential privacy on the provider's side.
+- **The live path is not reproducible.** Any non-default `temperature`, `top_p` or `top_k` returns a
+  400 and there is no `seed`, so two identical queries can score differently. Scores are cached per
+  combination, so a single query is self-consistent; across queries it is not. The offline model has
+  no such problem, which is why it is the default.
 
-`SPEC.md` §7 and §8 have the rest: the contribution score is a proxy for meaning rather than a measure
-of it, the cohort floor blocks the obvious narrowing attack and nothing subtler across a *sequence* of
-queries, retrieval is a deliberately dull lexical matcher, and only the registry persists. There is no
-chain, no wallet and no token — credits are integers in a double-entry ledger in one process, and
-`ledger.py` is where a real payment rail would be substituted.
+`SPEC.md` §7 and §8 have the rest, including the two worth knowing before you trust a number: the
+contribution score is a proxy for meaning rather than a measure of it, and the ledger is
+single-process and in-memory while only the registry persists.
 
 ## License
 
