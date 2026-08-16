@@ -11,9 +11,16 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from datagraph.attribution import Attribution, CoalitionValue, Similarity, TokenF1, attribute
+from datagraph.attribution import (
+    EFFICIENCY_TOLERANCE,
+    Attribution,
+    CoalitionValue,
+    Similarity,
+    TokenF1,
+    attribute,
+)
 from datagraph.ledger import Ledger
-from datagraph.models import ModelClient, ModelRefusal
+from datagraph.models import ModelClient, ModelRefusal, ModelSubstituted
 from datagraph.money import allocate
 from datagraph.policy import DEFAULT_COHORT_FLOOR, CohortTooSmall, enforce_cohort_floor
 from datagraph.registry import Registry, SourceView, provider_ids
@@ -159,7 +166,7 @@ class Marketplace:
         try:
             answer = value.reference_answer
             result = attribute(self.engine, value.players, value, **self._engine_kwargs())
-        except ModelRefusal as exc:
+        except (ModelRefusal, ModelSubstituted) as exc:
             return self._refund(query_id, question, escrow, researcher, sources, str(exc))
 
         # Weights are already per-provider: the players in the game are providers, so there is
@@ -177,6 +184,28 @@ class Marketplace:
                 researcher,
                 sources,
                 f"{self.engine} attributed no contribution to any provider",
+                attribution=result,
+                answer=answer,
+                model_calls=value.calls,
+            )
+
+        # The one way an efficient engine can stop being efficient. A negative marginal means a
+        # provider's records made the answer worse; clamping it to zero is right — it is not a
+        # debt — but it lifts the remaining weights above v(N), so together they now claim more
+        # than the payment. `allocate` would divide them back down to fit, which is exactly the
+        # silent transfer this project refuses in leave-one-out. There is no split of the escrow
+        # that pays every positive contributor its measured share, so the honest move is to
+        # decline to price the answer rather than to shade everyone down and say nothing.
+        if result.clamped_excess > EFFICIENCY_TOLERANCE:
+            return self._refund(
+                query_id,
+                question,
+                escrow,
+                researcher,
+                sources,
+                f"{self.engine} scored at least one provider below zero; the shares that "
+                f"remain claim more than the payment, and settling would mean scaling them "
+                f"to fit",
                 attribution=result,
                 answer=answer,
                 model_calls=value.calls,

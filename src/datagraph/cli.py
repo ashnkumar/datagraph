@@ -71,7 +71,7 @@ def _market(engine: str, live: bool, console: Console) -> Marketplace:
 
 
 def _sources_table(result: QueryResult) -> Table:
-    table = Table(title="Retrieved records — raw vs. what the model was shown", expand=True)
+    table = Table(title="Retrieved records — suppressed fields vs. disclosed values", expand=True)
     table.add_column("record", style="cyan", no_wrap=True)
     table.add_column("provider", style="magenta", no_wrap=True)
     table.add_column("suppressed by policy", style="red")

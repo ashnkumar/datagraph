@@ -210,6 +210,50 @@ def test_clamped_weights_floor_negatives_at_zero():
     assert result.clamped() == {"a": 0.8, "b": 0.0}
 
 
+def test_clamping_a_negative_marginal_breaks_efficiency_and_says_so():
+    """The one path on which an efficient engine stops exhausting exactly ``v(N)``.
+
+    Flooring a negative weight is right — a provider that made the answer worse is not in
+    debt — but it lifts the remaining weights above the value being allocated. Paying that
+    vector out means dividing it back down to fit, which is the transfer this project refuses
+    everywhere else, so the excess has to be visible rather than absorbed.
+    """
+    result = Attribution(engine="x", weights={"a": 0.8, "b": -0.3, "c": 0.5}, grand_value=1.0)
+
+    assert result.is_efficient  # the raw weights do exhaust v(N)
+    assert result.clamped_excess == pytest.approx(0.3)
+    assert sum(result.clamped().values()) == pytest.approx(1.3)  # ...the clamped ones overshoot
+
+
+def test_clamped_excess_is_zero_when_every_marginal_is_positive():
+    result = Attribution(engine="x", weights={"a": 0.6, "b": 0.4}, grand_value=1.0)
+    assert result.clamped_excess == 0.0
+    assert result.clamped() == result.weights
+
+
+def test_a_negative_shapley_marginal_is_reachable_from_a_real_value_function():
+    """Not a hypothetical: ``v`` is a similarity score, so it is not monotone in the players.
+
+    A provider whose records pull the answer away from what the rest of them produce scores a
+    negative marginal, and the raw weights still sum to ``v(N)`` exactly.
+    """
+    v = {
+        frozenset(): 0.0,
+        frozenset({"a"}): 1.0,
+        frozenset({"b"}): 0.0,
+        frozenset({"c"}): 0.5,
+        frozenset({"a", "b"}): 0.5,  # b displaces what a supplied
+        frozenset({"a", "c"}): 1.0,
+        frozenset({"b", "c"}): 0.5,
+        frozenset({"a", "b", "c"}): 1.0,
+    }
+    result = exact_shapley(["a", "b", "c"], lambda s: v[frozenset(s)])
+
+    assert result.weights["b"] < 0
+    assert result.is_efficient
+    assert result.clamped_excess > 0
+
+
 # --- similarity ------------------------------------------------------------------------------
 
 

@@ -145,7 +145,7 @@
       <div class="note" style="margin-top:7px">
         <span class="m">age</span> and <span class="m">recorded_on</span> are <span class="m">DERIVED</span>, so they arrive
         banded and month-truncated. The two struck fields are <span class="m">HIDDEN</span> — absent from the object the
-        prompt is built from, not filtered out of the answer afterwards.
+        prompt is built from, not filtered out of the answer afterward.
       </div>
     </div>
 
@@ -210,15 +210,16 @@
       <div class="clabel">Why the sums matter</div>
       <div class="q" style="font-size:12.2px">
         Shapley shares add up to the whole payment exactly, so the escrow is exhausted and settlement is
-        one balanced transaction. Leave-one-out reaches <span class="m">0.2744</span> and has to be normalised —
-        and normalising is what moves <span class="m">borealis</span> and <span class="m">cascade</span>'s credit
+        one balanced transaction. Leave-one-out reaches <span class="m">0.2744</span> and has to be normalized —
+        and normalizing is what moves <span class="m">borealis</span> and <span class="m">cascade</span>'s credit
         onto whoever happened to be unique.
       </div>
     </div>
 
     <div class="foot">
       Fractional shares become whole credits under a rounding rule that cannot lose or invent one, and
-      the ledger <b>refuses</b> a settlement whose payouts don't exhaust the escrow.
+      the ledger <b>refuses</b> a settlement whose payouts don't exhaust the escrow. A provider scoring
+      below zero refunds the query rather than scaling the rest down to fit.
     </div>
   </div>
 

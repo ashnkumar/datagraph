@@ -59,6 +59,10 @@ ValueFn = Callable[[frozenset[str]], float]
 #: Guard on exact Shapley, which is 2^n evaluations.
 MAX_EXACT_PLAYERS = 12
 
+#: How far a weight sum may drift from ``v(N)`` and still count as exhausting it. Efficiency is
+#: exact in the mathematics; this covers floating-point accumulation over many permutations.
+EFFICIENCY_TOLERANCE = 1e-9
+
 
 @dataclass(frozen=True)
 class Attribution:
@@ -76,7 +80,16 @@ class Attribution:
     @property
     def is_efficient(self) -> bool:
         """Whether the weights exhaust ``v(N)``, which is what settlement requires."""
-        return abs(self.total_weight - self.grand_value) < 1e-9
+        return abs(self.total_weight - self.grand_value) < EFFICIENCY_TOLERANCE
+
+    @property
+    def clamped_excess(self) -> float:
+        """How much weight :meth:`clamped` adds to the total. Zero unless a marginal is negative.
+
+        When this is not zero the clamped vector claims more than ``v(N)``, so no split of the
+        escrow can pay every positive contributor its efficient share.
+        """
+        return sum(-w for w in self.weights.values() if w < 0)
 
     def clamped(self) -> dict[str, float]:
         """Weights with negatives floored at zero, ready for :func:`datagraph.money.allocate`.
@@ -84,6 +97,14 @@ class Attribution:
         A negative marginal contribution means removing a source *improved* the answer. That
         is meaningful signal but it is not a debt, so it becomes a zero payout rather than a
         charge.
+
+        **Clamping breaks efficiency, and that is not a rounding detail.** The raw weights sum
+        to ``v(N)``; flooring a negative one lifts the sum above it, so the providers that are
+        left claim more than the whole payment between them. Handing that vector to
+        :func:`datagraph.money.allocate` would divide it back down to fit — the same silent
+        transfer this project refuses in leave-one-out, performed on the engine that is
+        supposed to be immune to it. :attr:`clamped_excess` is how a caller detects the case,
+        and :meth:`datagraph.marketplace.Marketplace.query` refunds rather than settle it.
         """
         return {k: max(0.0, w) for k, w in self.weights.items()}
 
@@ -133,7 +154,7 @@ class CoalitionValue:
     The Shapley value is not replication-proof. If each record were its own player and a
     provider's payout were the sum of their records' shares, a provider could split one record
     into four identical copies and take a larger cut for contributing nothing new: measured on
-    the demo data, one provider went from 200 to 326 credits out of 600 by cloning a single
+    the demo data, one provider went from 446 to 612 credits out of 1000 by cloning a single
     record four times. Grouping by provider makes the payout invariant to how a provider
     happens to divide its data into rows, because duplicating a row changes neither the player
     set nor any coalition's content.
@@ -229,9 +250,13 @@ def _rescale(raw: float, floor: float) -> float:
 def leave_one_out(players: Sequence[str], value: ValueFn) -> Attribution:
     """φᵢ = v(N) − v(N∖{i}). Cheap, intuitive, and not an efficient allocation.
 
-    Costs ``n + 1`` evaluations. See the module docstring for why the resulting weights should
-    not be used to settle a payment without understanding what they do on redundant sources —
-    :func:`datagraph.attribution.shapley` is the default for exactly that reason.
+    Costs ``n + 1`` calls to ``value``: the grand coalition plus one per player. Note that
+    *evaluations of v* and *model calls* are not the same count — :class:`CoalitionValue` also
+    generates a no-source answer to establish its floor, so the real cost through the shipped
+    path is ``n + 2`` generations, six for the four-provider demo. See the module docstring for
+    why the resulting weights should not be used to settle a payment without understanding what
+    they do on redundant sources — :func:`datagraph.attribution.shapley` is the default for
+    exactly that reason.
     """
     grand = frozenset(players)
     total = value(grand)

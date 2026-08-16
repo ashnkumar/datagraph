@@ -124,8 +124,8 @@ def test_a_provider_cannot_gain_by_splitting_its_data_across_more_records(market
     """Replication-proofness: payouts depend on what a provider contributes, not row count.
 
     The Shapley value is not replication-proof over per-record players, so an earlier version
-    of this system could be gamed — cloning one record four times moved that provider from 200
-    to 326 credits out of 600 without contributing anything new. Players are providers now, so
+    of this system could be gamed — cloning one record four times moved that provider from 446
+    to 612 credits out of 1000 without contributing anything new. Players are providers now, so
     the split is invariant.
     """
     baseline = market.query("rachel", DEMO_QUESTION, PAYMENT).payouts
@@ -218,6 +218,49 @@ def test_a_model_refusal_refunds_rather_than_charging(market):
     assert result.refunded
     assert "declined" in (result.refund_reason or "")
     assert market.balance_of("researcher", "rachel") == 100_000
+    market.ledger.check_invariants()
+
+
+def test_a_provider_scored_below_zero_refunds_instead_of_scaling_the_rest_down(market):
+    """The settlement path's own version of the failure it exists to refuse.
+
+    A negative marginal is clamped to zero, which lifts the remaining weights above ``v(N)``.
+    ``allocate`` would happily divide them back down to fit and the ledger would balance, so
+    the books alone cannot catch it — the query loop has to.
+    """
+
+    class DilutingModel:
+        """``borealis`` publishes enough low-value rows to crowd the prompt.
+
+        Alongside any strict subset of the others its records dominate and the answer collapses
+        to boilerplate; in the full set the rest outweigh it again. Context dilution is a real
+        way for a provider to make an answer worse, and it is all a negative marginal needs:
+        ``v`` stops being monotone in ``borealis``.
+        """
+
+        BOILERPLATE = "The records show"
+        FACTS = ("alpha", "bravo", "charlie", "delta", "echo")
+
+        def answer(self, question, sources):
+            present = {s.provider_id for s in sources}
+            if not present or ("borealis" in present and len(present) < 4):
+                return self.BOILERPLATE
+            facts = self.FACTS[: min(len(self.FACTS), len(present) * 2)]
+            return f"{self.BOILERPLATE} " + " ".join(facts)
+
+    market.model = DilutingModel()
+    market.engine = "exact_shapley"
+    result = market.query("rachel", DEMO_QUESTION, PAYMENT)
+
+    assert result.attribution is not None
+    assert min(result.attribution.weights.values()) < 0
+    assert result.attribution.is_efficient  # the raw weights were fine; clamping was not
+
+    assert result.refunded
+    assert "below zero" in (result.refund_reason or "")
+    assert "scaling them to fit" in (result.refund_reason or "")
+    assert market.balance_of("researcher", "rachel") == 100_000
+    assert market.ledger.open_escrows() == {}
     market.ledger.check_invariants()
 
 

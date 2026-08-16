@@ -56,7 +56,8 @@ shares that add up to the whole by construction rather than by being scaled to f
 
 Leave-one-out is the alternative worth taking seriously: where providers hold disjoint data it wins
 outright, at one model call per provider instead of one per combination, and both engines rank
-providers the same way.
+providers the same way. On the demo that is 6 calls against 16 — one per provider, plus the
+reference answer and the no-records baseline that every run needs.
 
 ## How it works
 
@@ -71,7 +72,9 @@ produce alone, then cached. Retrieval caps a query at six providers, so sampling
 enumerating all 16 combinations cost the same 16 model calls.
 
 **Settle once.** Fractional shares become whole credits under a rounding rule that can't lose or
-invent one, and the ledger refuses any settlement that doesn't exhaust the escrow.
+invent one, and the ledger refuses any settlement that doesn't exhaust the escrow. A provider that
+scores below zero leaves the rest claiming more than the payment, so the query is refunded rather
+than scaled down to fit.
 
 ### Architecture
 
@@ -87,7 +90,7 @@ invent one, and the ledger refuses any settlement that doesn't exhaust the escro
 | **6** | Registry | `registry.py` | Providers, datasets, records, retrieval — SQLite, stdlib only |
 | **7** | Money | `ledger.py`, `money.py` | Double-entry accounts with escrow; integer credits and apportionment |
 
-Start with `src/datagraph/attribution.py`. It holds both engines and it is 337 lines. `SPEC.md` has
+Start with `src/datagraph/attribution.py`. It holds both engines and it is 362 lines. `SPEC.md` has
 the design notes — how the split is computed, the rejected alternatives, and every design revision
 with the test that forced it.
 
@@ -108,14 +111,15 @@ every environment variable.
 
 ```bash
 uv sync --extra dev
-uv run pytest            # 138 tests, offline, no API key
+uv run pytest            # 148 tests, offline, no API key
 uv run pytest -m live    # one end-to-end test against the real API
 ```
 
 The engines are tested against small synthetic games whose correct answers are known in closed form,
 so the assertions check the mathematics rather than a model's mood — read `tests/test_attribution.py`
-first. `tests/test_docs.py` pins this page to the code: every number quoted above is re-derived
-there, including the line count two sections up.
+first. `tests/test_docs.py` pins the figures on this page to the code — the payout rows, the weight
+sums, the replication and false-name examples, the model-call counts, and the line count two
+sections up — so a number that drifts out of date fails the build instead of the reader.
 
 ## Limitations
 
@@ -127,10 +131,11 @@ there, including the line count two sections up.
   prompt-side rule can leak a hidden field — but `HIDDEN` values sit in cleartext SQLite, and an
   operator with database access reads them. Real guarantees need the raw values never to reach this
   tier: trusted execution, secure aggregation, or differential privacy on the provider's side.
-- **The live path is not reproducible.** Any non-default `temperature`, `top_p` or `top_k` returns a
-  400 and there is no `seed`, so two identical queries can score differently. Scores are cached per
-  combination, so a single query is self-consistent; across queries it is not. The offline model has
-  no such problem, which is why it is the default.
+- **The live path is not reproducible, and its noise is paid out.** Any non-default `temperature`,
+  `top_p` or `top_k` returns a 400 and there is no `seed`. A provider's score is the gap between two
+  independently sampled answers, so wording that moved on its own is credited to whoever was in
+  that combination: the shares stay exact, but which provider earned them gets noisier. The offline
+  model is deterministic, which is why it is the default.
 
 `SPEC.md` §7 and §8 have the rest, including the two worth knowing before you trust a number: the
 contribution score is a proxy for meaning rather than a measure of it, and the ledger is

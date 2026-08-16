@@ -150,6 +150,28 @@ def test_sampling_and_enumerating_cost_the_same_number_of_calls():
         assert market.query("r1", QUESTION, PAYMENT).model_calls == 16
 
 
+def test_leave_one_out_costs_what_the_documents_say_it_costs():
+    """Its cost is one of the four lessons, and it drifted: three artifacts, three numbers.
+
+    ``leave_one_out`` makes ``n + 1`` calls to ``v``, which is not the same as ``n + 1`` model
+    calls — ``CoalitionValue`` also generates a no-source answer for the floor. Six on the demo,
+    not four and not five.
+    """
+    assert "that is 6 calls against 16" in README
+
+    registry = Registry(":memory:")
+    seed_demo(registry)
+    market = Marketplace(
+        registry=registry, ledger=Ledger(), model=FakeModel(), engine="leave_one_out"
+    )
+    market.fund_researcher("r1", PAYMENT)
+    result = market.query("r1", QUESTION, PAYMENT)
+
+    players = len(result.attribution.weights)
+    assert players == 4
+    assert result.model_calls == players + 2 == 6
+
+
 BRITISH = re.compile(
     r"behaviour|colour|favour|organis|recognis|centre|whilst|amongst|learnt|cancelled"
     r"|labelled|catalogue|defence|offence|practis|programme|sceptic|utilis|initialis"

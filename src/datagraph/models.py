@@ -31,6 +31,7 @@ __all__ = [
     "FakeModel",
     "ModelClient",
     "ModelRefusal",
+    "ModelSubstituted",
     "Source",
 ]
 
@@ -95,6 +96,29 @@ class ModelRefusal(Exception):
         self.explanation = explanation
 
 
+class ModelSubstituted(Exception):
+    """Raised when a coalition was answered by a different model than the rest of the query.
+
+    Server-side fallbacks re-run a declined request on whichever model Anthropic recommends for
+    that refusal category, and the response names the model that served it. That is the right
+    behavior for a product and the wrong behavior for a measurement: every score in a query is
+    a comparison between generations, so a coalition served by a different model has had a
+    second variable changed underneath it. Whatever the swap did to the wording is then paid
+    to — or taken from — whichever provider happened to be in that coalition.
+
+    Detecting it is cheap and the alternative is not: there is no way to tell afterward which
+    share was contribution and which was the model change.
+    """
+
+    def __init__(self, requested: str, served: str) -> None:
+        super().__init__(
+            f"coalition was answered by {served!r} rather than {requested!r}; scores from two "
+            f"different models are not comparable"
+        )
+        self.requested = requested
+        self.served = served
+
+
 def build_prompt(question: str, sources: Sequence[Source]) -> str:
     """Assemble the user message. Sources are ordered by id so the prompt is stable."""
     if not sources:
@@ -148,10 +172,16 @@ class AnthropicModel:
             "total output for the request, thinking and response text combined."
         use_fallbacks: Opt into server-side refusal fallbacks, so a request declined by a
             safety classifier is re-run on the model Anthropic recommends for that refusal
-            category, inside the same call. Enabled by default. The feature is in beta and is
-            unavailable on the Batches API and on the cloud-provider platforms, so if the
-            request is rejected for it, the first call drops it and carries on unprotected
-            rather than failing the whole query.
+            category, inside the same call. Enabled by default, because a refusal part-way
+            through a query otherwise costs the researcher the whole query. What it must not do
+            is score one coalition on a different model from the rest, so the response's model
+            is checked against the requested one and a substitution ends the query — see
+            :class:`ModelSubstituted`. Availability: the feature is in beta and is unavailable
+            on the Batches API and on the cloud-provider platforms, so if the request is
+            rejected for it, the first call drops it and carries on without it rather than
+            failing the whole query. Dropping it is a deliberate choice and not what the docs
+            recommend — they point at client-side fallback middleware, which would preserve the
+            protection at the cost of owning the retry policy here.
     """
 
     def __init__(
@@ -201,6 +231,14 @@ class AnthropicModel:
                 category=getattr(details, "category", None),
                 explanation=getattr(details, "explanation", None),
             )
+
+        # The response names the model that served it, which is the only way to find out that a
+        # fallback fired. Two coalitions scored by two different models are not comparable, and
+        # the difference between them would be paid out as contribution — so the query stops
+        # here rather than quietly mixing generators. See :class:`ModelSubstituted`.
+        served = getattr(response, "model", None)
+        if served is not None and served != self._model:
+            raise ModelSubstituted(requested=self._model, served=served)
 
         text = "".join(b.text for b in response.content if b.type == "text")
         return _INTERNAL_TAG.sub("", text).strip()

@@ -8,8 +8,9 @@ projection its policy permits, and has a model answer from what survives redacti
 how much each provider's records actually **changed that answer**, and settles the escrow in
 proportion to measured contribution.
 
-The interesting part is the measurement, and the fact that the shares are guaranteed to add up to
-the payment rather than being scaled to fit.
+The interesting part is the measurement, and the fact that the shares add up to the payment by
+construction rather than by being scaled to fit. §2.5 covers the one case where that guarantee
+cannot be honored, and what the system does instead of quietly breaking it.
 
 ---
 
@@ -64,7 +65,9 @@ The intuitive one, and the one most implementations reach for:
 φᵢ = v(N) − v(N \ {i})
 ```
 
-"How much worse is the answer without you?" One regeneration per player, so `n + 1` model calls.
+"How much worse is the answer without you?" One regeneration per player. That is `n + 1` calls to
+`v` — the grand coalition plus one per player — but `n + 2` model calls, because `CoalitionValue`
+also generates the no-source answer it measures the floor from. Six on the four-provider demo.
 
 **The shares do not add up.** `Σφᵢ ≠ v(N)` in general, which means the payouts do not exhaust the
 payment, and the shortfall or excess has to be papered over by normalizing — dividing by `Σφᵢ`.
@@ -89,7 +92,8 @@ That one change fixes both problems above:
 
 - **The shares add up exactly.** Each order is a chain of differences running from nothing to
   everything, so every individual order sums to `v(N)` on its own — and therefore so does any
-  average of orders. The escrow is exhausted with no normalization step.
+  average of orders. The escrow is exhausted with no normalization step. There is exactly one way
+  this stops being true, and §2.5 is about it.
 - **Redundancy resolves correctly.** A provider that arrives before its duplicate adds a lot; one
   that arrives after it adds nothing. Both happen equally often across all orders, so two providers
   supplying the same indispensable fact split its credit rather than both being zeroed.
@@ -124,9 +128,9 @@ for `2ⁿ`. The default order count is correspondingly high (2000), because belo
 marginal order costs a dictionary lookup rather than a model call, and sampling sparsely bought
 nothing but noise.
 
-The cost is real and the README states it plainly rather than hiding it. `loo` remains available as
-the cheap engine, documented with the defect above, because showing the two side by side is more
-useful than shipping only the right one.
+The cost is real and the README states it. `loo` remains available as the cheap engine, documented
+with the defect above, because showing the two side by side is more useful than shipping only the
+right one.
 
 ### 2.4 The demo data is constructed
 
@@ -141,6 +145,42 @@ redundancy rather than a naturally occurring one. The behavior it demonstrates d
 the staging. Leave-one-out discounts *any* provider whose contribution is corroborated, in proportion
 to how completely somebody else covers it; total duplication is simply the case where the discount
 reaches 100% and the arithmetic is legible.
+
+### 2.5 The one way the shares stop adding up
+
+Efficiency is a theorem about the weights, not about the payouts. There is a step between them, and
+it can break the guarantee.
+
+`v` is a similarity score, so it is not monotone in the players: adding a provider whose records pull
+the answer away from what the others produce *lowers* the score. That provider's marginal
+contribution is negative, and the marginals still sum to `v(N)` — the theorem holds. But a negative
+payout is not a thing. A provider cannot be charged for participating, so the weight is floored at
+zero before the money is apportioned.
+
+Flooring it is right and it is also the problem. The remaining weights now sum to *more* than `v(N)`,
+so together they claim more than the payment. `allocate()` divides every weight by their total, which
+on an efficient vector is a division by one and changes nothing — and on this vector quietly scales
+everybody down to fit. The books still balance. The ledger still reports a fully settled escrow. The
+transfer is invisible, and it is the same arithmetic this document criticizes leave-one-out for in
+§2.1, running inside the engine that is supposed to be immune to it.
+
+Three options, and only one of them is honest:
+
+1. Pay each positive contributor its measured share. Impossible — they sum to more than the escrow.
+2. Scale them down to fit. This is what the code used to do, silently.
+3. Refuse to settle.
+
+The marketplace does (3): if clamping changed the total, the query is refunded and the reason says
+so. It is the same exit the loop already takes when nothing contributed at all — the mechanism has no
+honest price for this answer, so it does not charge for one. `Attribution.clamped_excess` is the
+detection, `tests/test_marketplace.py` builds a value function that triggers it, and the refusal is
+the only reason the claim in §2.2 can be stated without an asterisk.
+
+This was found by an external review of the finished code, not during the build. The original
+implementation clamped, apportioned, settled, and reported success. Every offline figure in this
+repository was and is unaffected — the demo fixture produces no negative marginals — which is
+exactly why it survived: the tests all passed, the invariants all held, and the defect lived on a
+path the fixture never took.
 
 ---
 
@@ -171,8 +211,25 @@ and is the obvious next one to write; it is not written, and the engines are ind
 This is a deliberate, stated limitation. Lexical F1 measures whether the same content survived, not
 whether the *meaning* did. It is adequate for the extractive question-answering this system does —
 answers are grounded in retrieved records, so contribution shows up as content appearing or
-disappearing — and it is honest about being a proxy. The interface exists so a reader can swap in
-something better without touching the attribution engines.
+disappearing — and it is a proxy. The interface exists so a reader can swap in something better
+without touching the attribution engines.
+
+**What `v` measures against a live model, stated precisely.** `answer(S)` and `answer(S ∪ {i})` are
+two independent samples from a generator that cannot be pinned: non-default `temperature`, `top_p`
+and `top_k` all return a 400 on this model and there is no `seed`. So the difference between them —
+which is exactly what provider `i` gets paid for — carries both what `i` contributed *and* whatever
+the generator did differently that time. Memoization and pinning `v(N)` to the reference answer fix
+the *arithmetic*: each combination is generated once, every comparison inside a query runs against a
+fixed set of strings, and the shares sum to the quoted total. Neither removes the noise from the
+marginal, because no amount of caching makes two independent samples differ only by their inputs.
+
+The consequence is worth being exact about, because it is easy to overstate in both directions. The
+total is exact and the split is noisy: shares still exhaust the escrow, but which provider earned
+them moves with the generator. Offline this is not a problem at all — `FakeModel` is deterministic,
+so every figure in the README and the tests is exact. Live, a payout is a contribution estimate from
+one sample per combination, and this design does nothing to bound its variance. Doing so would mean
+repeated generations per combination and an uncertainty policy on top — more model calls against the
+cost problem in §2.3, and the reason it is scoped out rather than claimed.
 
 ---
 
@@ -197,9 +254,13 @@ Two rules enforce it:
    assembled into a prompt. A `HIDDEN` field is absent from the object the prompt builder receives,
    so no prompt can contain it and no model output can leak it. This is a structural guarantee about
    the data path, not a request to the model to behave.
-2. **Cohort floor.** A query whose redacted result set spans fewer than `k` distinct providers
-   (default `k = 3`) is refused before any generation happens. Without this, a researcher narrows a
-   query until it resolves to one person and reads that person's record out of the answer.
+2. **Cohort floor.** A query whose redacted result set spans fewer than `k` distinct provider
+   accounts (default `k = 3`) is refused before any generation happens. Without this, a researcher
+   narrows a query until one provider's records are the whole answer and reads them out of it.
+   **This is source diversity, not k-anonymity.** Provider id is the only identity in the schema,
+   so the check has no notion of a data subject: three accounts held by one operator satisfy it,
+   and so do three providers whose records all describe the same person. It raises the cost of
+   narrowing a query to a single source. It does not put three people behind an answer.
 
 **What this is and is not.** These are enforced *by the application*, in process, by a trusted
 operator. Nothing here is cryptographic. An operator with database access reads raw records; a
@@ -270,16 +331,28 @@ attribution code rather than mocking past it.
 *disabled*, on the reasoning that the task is short extractive work repeated up to `2ⁿ` times per
 query and depth buys nothing. That was wrong, for a reason specific to this project. Anthropic's
 documentation recommends the opposite trade — "for most tasks, thinking enabled at `low` effort
-performs better than thinking disabled at similar cost" — and, more decisively, disabling thinking
-is what causes the model to "emit `<thinking>` tags or other internal XML tags into its visible
+performs better than thinking disabled at similar cost" — and, more decisively, with thinking
+disabled the model "can emit `<thinking>` tags or other internal XML tags into its visible
 response." Here the visible response *is* the measuring instrument, so a leaked tag is spurious
 tokens inside a similarity score and a wrong payout. Effort is the cost lever instead, and
 `display: "omitted"` is set explicitly — already the default on this model — so thinking text can
 never reach the scored string.
 
-Requests opt into server-side refusal fallbacks by default. The feature is in beta and unavailable
-on the Batches API and the cloud-provider platforms, so if the request is rejected for it, the first
-call drops the parameter and carries on unprotected rather than failing the whole query.
+Requests opt into server-side refusal fallbacks by default, because a refusal part-way through a
+query otherwise costs the researcher the whole query. The feature is in beta and unavailable on the
+Batches API and the cloud-provider platforms, so if the request is rejected for it, the first call
+drops the parameter and carries on without it rather than failing the whole query. Dropping it is a
+choice and not what the documentation recommends — it points at client-side fallback middleware,
+which the pinned SDK ships; taking that route would keep the protection at the cost of owning the
+retry policy here.
+
+**What a fallback must not be allowed to do is change the generator mid-query.** A fallback re-runs
+the declined request on whichever model Anthropic recommends for that refusal category, and the
+response names the model that served it. Every score in a query is a comparison between two
+generations, so a combination answered by a different model has had a second variable changed
+underneath it, and whatever that did to the wording would be paid out as somebody's contribution.
+The response's model is checked against the requested one and a mismatch ends the query with a
+refund. Detection is one comparison; there is no way to separate the two effects afterward.
 
 ---
 
@@ -317,7 +390,7 @@ on the demo fixture, +22% for no new information.
 
 This is not a bug in the implementation. No split computed over self-declared identities can resist
 this while a second identity is free. Closing it requires something underneath the measurement —
-identity attestation, staking, or a cost to registering. The honest scope statement is that this
+identity attestation, staking, or a cost to registering. The scope, stated plainly, is that this
 project solves the split given a trustworthy player set, and does not establish one. The README says
 so in its limitations rather than leaving a reader to find it.
 
@@ -342,7 +415,7 @@ so in its limitations rather than leaving a reader to find it.
 | Failure handling | Refund guard around the whole query | Any exception between escrow and settlement would otherwise debit the payer and strand the credits |
 | Apportionment arithmetic | Exact rationals | Floats silently lost credits at the edges of the accepted input range |
 | Language | Python | The audience reads Python; the attribution logic is the point and must be legible |
-| Privacy claim | Application-enforced, stated as such | Overclaiming here is the specific dishonesty this design is reacting to |
+| Privacy claim | Application-enforced, stated as such | The reference implementation overclaimed here; this one states the tier it runs in |
 
 ### Where the build changed the plan
 

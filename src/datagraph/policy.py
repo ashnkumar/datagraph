@@ -132,11 +132,17 @@ def _coarsen(value: Any, bucket: int) -> str | None:
 
 
 def enforce_cohort_floor(provider_ids: Iterable[str], floor: int = DEFAULT_COHORT_FLOOR) -> None:
-    """Refuse a query whose results come from fewer than ``floor`` distinct providers.
+    """Refuse a query whose results come from fewer than ``floor`` distinct provider accounts.
 
-    Without this, a researcher narrows a query until it resolves to a single person and reads
-    that person's record straight out of the answer. The check runs *before* generation, so a
-    refused query never reaches the model and never spends a credit.
+    Without this, a researcher narrows a query until one provider's records are the whole answer
+    and reads them straight out of it. The check runs *before* generation, so a refused query
+    never reaches the model and never spends a credit.
+
+    **This is a source-diversity floor, not k-anonymity.** It counts provider ids, which is the
+    only identity in the schema; it has no notion of a data subject and no way to acquire one.
+    Three accounts held by one operator satisfy it, and so do three providers whose records all
+    describe the same person. It raises the cost of narrowing a query to a single source — it
+    does not guarantee that three people stand behind an answer.
 
     Raises:
         CohortTooSmall: If the result set spans fewer than ``floor`` providers.

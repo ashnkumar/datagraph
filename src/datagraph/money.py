@@ -39,6 +39,18 @@ def allocate(total: int, weights: Sequence[float]) -> list[int]:
     * **Negative weights** — rejected. A negative contribution has no meaning here, and silently
       clamping one to zero would hide a bug in an attribution engine.
 
+    **On dividing by the pool.** Each quota is ``total * weight / sum(weights)``, which is
+    proportional allocation — the same arithmetic that, applied to weights which do not sum to
+    the whole, is the silent transfer this project exists to refuse. It is safe here only
+    because of what the caller guarantees about the vector it passes: the Shapley weights sum
+    to ``v(N)``, the payment buys ``v(N)``, and so the pool is one and the division changes
+    nothing. That is a property of the *attribution*, not of this function, and this function
+    cannot check it — the weights arrive with no record of what they were meant to exhaust.
+    :meth:`datagraph.marketplace.Marketplace.query` is where it is enforced: it refuses to
+    settle a vector that clamping has pushed above ``v(N)`` rather than letting the line below
+    quietly scale it back down. Hand this function a vector that does not exhaust the value it
+    was measured against and it will balance the books by moving money between recipients.
+
     Args:
         total: Credits to divide. Must be non-negative.
         weights: Relative shares, one per recipient. Must be non-negative and finite.
