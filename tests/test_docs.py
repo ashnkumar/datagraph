@@ -39,7 +39,7 @@ def _payouts(engine: str) -> dict[str, int]:
 
 def test_readme_states_the_current_length_of_the_file_it_says_to_read_first():
     claimed = int(
-        re.search(r"attribution\.py`\. It holds both engines and it is (\d+) lines", README).group(
+        re.search(r"attribution\.py`\. It holds both engines and it's (\d+) lines", README).group(
             1
         )
     )
@@ -157,7 +157,7 @@ def test_leave_one_out_costs_what_the_documents_say_it_costs():
     calls — ``CoalitionValue`` also generates a no-source answer for the floor. Six on the demo,
     not four and not five.
     """
-    assert "that is 6 calls against 16" in README
+    assert "that's 6 calls against 16" in README
 
     registry = Registry(":memory:")
     seed_demo(registry)

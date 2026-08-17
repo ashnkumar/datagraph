@@ -56,7 +56,7 @@ shares that add up to the whole by construction rather than by being scaled to f
 
 Leave-one-out is the alternative worth taking seriously: where providers hold disjoint data it wins
 outright, at one model call per provider instead of one per combination, and both engines rank
-providers the same way. On the demo that is 6 calls against 16 — one per provider, plus the
+providers the same way. On the demo that's 6 calls against 16 — one per provider, plus the
 reference answer and the no-records baseline that every run needs.
 
 ## How it works
@@ -64,11 +64,11 @@ reference answer and the no-records baseline that every run needs.
 ![Three panels. One: a researcher escrows 1000 credits and asks a question; five records are retrieved and redacted by policy. Two: the answer is re-generated from every combination of providers to measure what each one contributed, and adding cascade to borealis changes the score by exactly zero. Three: the shares become whole credits and the escrow settles.](docs/how-it-works.png)
 
 **Retrieve and redact.** Every field is `OPEN`, `DERIVED` (banded) or `HIDDEN`. Hidden fields never
-reach the prompt builder, and anything unlisted is hidden by default. A query with fewer than three
+reach the prompt builder, and anything unlisted is hidden by default. A query with fewer than 3
 providers behind it is refused before the model runs.
 
 **Score by re-answering.** Each combination of providers is scored on how much of the answer it can
-produce alone, then cached. Retrieval caps a query at six providers, so sampling 2000 orderings and
+produce alone, then cached. Retrieval caps a query at 6 providers, so sampling 2000 orderings and
 enumerating all 16 combinations cost the same 16 model calls.
 
 **Settle once.** Fractional shares become whole credits under a rounding rule that can't lose or
@@ -90,7 +90,7 @@ than scaled down to fit.
 | **6** | Registry | `registry.py` | Providers, datasets, records, retrieval — SQLite, stdlib only |
 | **7** | Money | `ledger.py`, `money.py` | Double-entry accounts with escrow; integer credits and apportionment |
 
-Start with `src/datagraph/attribution.py`. It holds both engines and it is 362 lines. `SPEC.md` has
+Start with `src/datagraph/attribution.py`. It holds both engines and it's 362 lines. `SPEC.md` has
 the design notes — how the split is computed, the rejected alternatives, and every design revision
 with the test that forced it.
 
@@ -104,7 +104,7 @@ with the test that forced it.
 
 `--question` and `--payment` work on `demo` and `compare`; `--engine` selects `shapley`,
 `exact_shapley`, or `leave_one_out` on `demo`. `--live` calls the real API instead of the offline
-model — on `compare` that is three runs, so it says what it is about to spend. `.env.example` lists
+model — on `compare` that's 3 runs, so it says what it's about to spend. `.env.example` lists
 every environment variable.
 
 ## Tests
@@ -124,18 +124,18 @@ sections up — so a number that drifts out of date fails the build instead of t
 ## Limitations
 
 - **It counts accounts, not people.** Extra copies of a record earn nothing, but registering twice
-  does: splitting `delta`'s two records across two accounts took its combined take
+  does: splitting `delta`'s 2 records across 2 accounts took its combined take
   from `365` to `446` of 1000. Nothing here checks that two providers are different people. The fix
   is identity or stake underneath the measurement, not a change to the scoring.
 - **Privacy is procedural, not cryptographic.** Redaction happens before the prompt is built, so no
   prompt-side rule can leak a hidden field — but `HIDDEN` values sit in cleartext SQLite, and an
   operator with database access reads them. Real guarantees need the raw values never to reach this
   tier: trusted execution, secure aggregation, or differential privacy on the provider's side.
-- **The live path is not reproducible, and its noise is paid out.** Any non-default `temperature`,
-  `top_p` or `top_k` returns a 400 and there is no `seed`. A provider's score is the gap between two
+- **The live path isn't reproducible, and its noise is paid out.** Any non-default `temperature`,
+  `top_p` or `top_k` returns a 400 and there's no `seed`. A provider's score is the gap between two
   independently sampled answers, so wording that moved on its own is credited to whoever was in
   that combination: the shares stay exact, but which provider earned them gets noisier. The offline
-  model is deterministic, which is why it is the default.
+  model is deterministic, which is why it's the default.
 
 `SPEC.md` §7 and §8 have the rest, including the two worth knowing before you trust a number: the
 contribution score is a proxy for meaning rather than a measure of it, and the ledger is
