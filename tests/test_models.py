@@ -64,9 +64,7 @@ def test_a_refusal_raises_rather_than_returning_empty_text():
         category: str = "bio"
         explanation: str = "declined"
 
-    client = StubClient(
-        StubResponse(content=[], stop_reason="refusal", stop_details=Details())
-    )
+    client = StubClient(StubResponse(content=[], stop_reason="refusal", stop_details=Details()))
     model = AnthropicModel(client=client)
 
     with pytest.raises(ModelRefusal) as exc:

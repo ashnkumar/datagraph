@@ -39,9 +39,7 @@ def _payouts(engine: str) -> dict[str, int]:
 
 def test_readme_states_the_current_length_of_the_file_it_says_to_read_first():
     claimed = int(
-        re.search(r"attribution\.py`\. It holds both engines and it's (\d+) lines", README).group(
-            1
-        )
+        re.search(r"attribution\.py`\. It holds both engines and it's (\d+) lines", README).group(1)
     )
     actual = len((ROOT / "src" / "datagraph" / "attribution.py").read_text().splitlines())
     assert claimed == actual
