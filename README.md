@@ -1,6 +1,6 @@
 # datagraph
 
-Royalty splits for AI answers, measured from the answer itself.
+Royalty splits for AI inference
 
 [![ci](https://github.com/ashnkumar/datagraph/actions/workflows/ci.yml/badge.svg)](https://github.com/ashnkumar/datagraph/actions/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/downloads/)
@@ -8,10 +8,11 @@ Royalty splits for AI answers, measured from the answer itself.
 
 ![One query, four providers, 1000 credits. Leave-one-out pays borealis and cascade nothing and its weights sum to 0.2744; both Shapley engines split the credit between them and sum to 1.0000.](docs/demo.gif)
 
-One query, four providers, 1000 credits, three ways of splitting it. `borealis` and `cascade` are
-seeded with the same fact on purpose, and the two red zeros are what the obvious method pays them
-for it. Its weights come to `0.2744` of the payment, so the rest goes to whoever happened to be
-unique.
+One query, four providers, 1000 credits, three ways of splitting it. `borealis` and `cascade` hold
+the same fact on purpose. Leave-one-out asks what changes when you remove a provider, and removing
+either one of them changes nothing, so it pays both of them zero — the two red zeros. Its shares
+add up to `0.2744` of the payment rather than all of it. The other two engines split the credit
+between the pair and add up to exactly `1.0000`.
 
 *See the **[technical post](https://example.com/datagraph-technical-post)** for more details.*
 
@@ -26,20 +27,31 @@ Needs Python 3.11+ and [uv](https://docs.astral.sh/uv/). No API key, no services
 the default model is a deterministic offline stand-in, so `compare` prints the same table on any
 machine. It runs one query under all three engines, side by side.
 
-`uv run datagraph demo` runs a single query end to end and shows the working: what was retrieved,
+`uv run datagraph demo` runs a single query end to end and shows the pipeline: what was retrieved,
 what redaction removed, the answer, and who got paid.
 
 **To use the real API:** `cp .env.example .env`, put your key in it, and add `--live`.
 
-## The problem
+## The world this assumes
 
-Retrieval-augmented generation has a payment problem. A model answers a question using records
-retrieved from several data providers, the asker pays once for that answer, and something has to
-decide how much of that payment each provider earned.
+**No market today pays a data provider for what its records contributed to a specific AI answer.**
+Retrieval-augmented generation (RAG) pulls records into a prompt from wherever they happen to live,
+and where money changes hands at all it's settled somewhere else — a bulk license, a subscription, a
+crawl agreement. None of those depend on whether the data turned out to be any use.
 
-Paying whoever got retrieved is the obvious move, and it pays for showing up: a record that changed
-nothing earns what the record carrying the answer earns. The way to earn more becomes publishing
-more rows, not better ones.
+This project assumes that changes: that an agent builder will connect to data providers the way they
+already connect to a model provider, pay per query, and have that payment reach whoever actually
+supplied the answer. That market doesn't exist yet, and neither does most of the plumbing for it.
+
+`datagraph` is a working implementation of one piece of that plumbing — the settlement layer. A
+question comes in, a payment goes into escrow, records from several providers go into the prompt,
+one answer comes out, and something has to decide how much of that payment each provider earned.
+It's the piece you can build before the rest of the market exists, and the piece that decides what
+kind of data such a market would reward.
+
+The first thing you'd reach for is paying whoever got retrieved. That pays for showing up: a record
+that changed nothing earns what the record carrying the answer earns, and the way to earn more
+becomes publishing more rows rather than better ones.
 
 The better question is what each provider was worth — take one away and see what changes. That
 works until two providers hold the same fact. Remove either and nothing changes, so both measure as
