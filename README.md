@@ -14,7 +14,7 @@ The demo runs one synthetic query against 4 data providers and compares 3 payout
 removing either provider leaves the other one in the answer. Its measured shares total only
 `0.2744`. Both Shapley methods split the credit between them and total `1.0000`.
 
-*See the **[technical post](https://example.com/datagraph-technical-post)** for more details.*
+*See the **[technical post](https://voxellabs.ai/projects/datagraph)** for more details.*
 
 ## Quickstart
 
