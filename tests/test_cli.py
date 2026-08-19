@@ -33,6 +33,7 @@ def test_demo_accepts_an_engine_choice(run):
     code, out = run("demo", "--engine", "leave_one_out")
     assert code == 0
     assert "leave_one_out" in out
+    assert "weights were normalized to fit the payment" in out
 
 
 def test_compare_shows_every_engine(run):

@@ -23,7 +23,7 @@ from datagraph.registry import Registry
 __all__ = ["DEMO_QUESTION", "STUDY_POLICY", "seed_demo"]
 
 #: The question the demo asks. Chosen to retrieve the redundancy pair alongside a distinctive
-#: record, so the difference between the two engines is visible in one run.
+#: record, so the difference between Shapley and leave-one-out is visible in one run.
 DEMO_QUESTION = (
     "What do the records show about sleep hours and resting heart rate in the northern region?"
 )

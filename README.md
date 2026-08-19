@@ -1,6 +1,7 @@
 # datagraph
 
-Royalty splits for AI inference
+A reference implementation for buying access to third-party data per RAG query and splitting the
+payment by contribution.
 
 [![ci](https://github.com/ashnkumar/datagraph/actions/workflows/ci.yml/badge.svg)](https://github.com/ashnkumar/datagraph/actions/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/downloads/)
@@ -8,11 +9,10 @@ Royalty splits for AI inference
 
 ![One query, four providers, 1000 credits. Leave-one-out pays borealis and cascade nothing and its weights sum to 0.2744; both Shapley engines split the credit between them and sum to 1.0000.](docs/demo.gif)
 
-One query, four providers, 1000 credits, three ways of splitting it. `borealis` and `cascade` hold
-the same fact on purpose. Leave-one-out asks what changes when you remove a provider, and removing
-either one of them changes nothing, so it pays both of them zero — the two red zeros. Its shares
-add up to `0.2744` of the payment rather than all of it. The other two engines split the credit
-between the pair and add up to exactly `1.0000`.
+The demo runs one synthetic query against 4 data providers and compares 3 payout methods.
+`borealis` and `cascade` intentionally supply the same fact. Leave-one-out pays both 0 because
+removing either provider leaves the other one in the answer. Its measured shares total only
+`0.2744`. Both Shapley methods split the credit between them and total `1.0000`.
 
 *See the **[technical post](https://example.com/datagraph-technical-post)** for more details.*
 
@@ -23,70 +23,103 @@ git clone https://github.com/ashnkumar/datagraph && cd datagraph
 uv run datagraph compare
 ```
 
-Needs Python 3.11+ and [uv](https://docs.astral.sh/uv/). No API key, no services, no containers —
-the default model is a deterministic offline stand-in, so `compare` prints the same table on any
-machine. It runs one query under all three engines, side by side.
+Needs Python 3.11+ and [uv](https://docs.astral.sh/uv/). No API key, service, or container is needed.
+The default model is a deterministic offline stand-in, so `compare` prints the same result on every
+machine. It runs the same query through all 3 payout methods.
 
-`uv run datagraph demo` runs a single query end to end and shows the pipeline: what was retrieved,
-what redaction removed, the answer, and who got paid.
+`uv run datagraph demo` runs one query from retrieval through settlement. It shows the records that
+were retrieved, the fields removed by each provider's disclosure policy, the generated answer, and
+the final payouts.
 
-**To use the real API:** `cp .env.example .env`, put your key in it, and add `--live`.
+**To use the Anthropic API:** `cp .env.example .env`, put your key in it, and add `--live`.
 
-## The world this assumes
+## What this implements
 
-**No market today pays a data provider for what its records contributed to a specific AI answer.**
-Retrieval-augmented generation (RAG) pulls records into a prompt from wherever they happen to live,
-and where money changes hands at all it's settled somewhere else — a bulk license, a subscription, a
-crawl agreement. None of those depend on whether the data turned out to be any use.
+In a conventional retrieval-augmented generation (RAG) application, the developer first assembles
+or licenses a corpus and retrieval searches that corpus. `datagraph` is a reference implementation
+of a different setup: an AI application can buy access to relevant records from _multiple_
+independent data providers for a query, then pay those providers from the query fee.
 
-This project assumes that changes: that an agent builder will connect to data providers the way they
-already connect to a model provider, pay per query, and have that payment reach whoever actually
-supplied the answer. That market doesn't exist yet, and neither does most of the plumbing for it.
+This gives AI developers a way to search beyond their own corpus without first importing or
+licensing every provider's full dataset. It would let a provider make useful, paywalled records
+available for specific questions instead of selling unrestricted access to the whole collection.
 
-`datagraph` is a working implementation of one piece of that plumbing — the settlement layer. A
-question comes in, a payment goes into escrow, records from several providers go into the prompt,
-one answer comes out, and something has to decide how much of that payment each provider earned.
-It's the piece you can build before the rest of the market exists, and the piece that decides what
-kind of data such a market would reward.
+This is a _proposed_ transaction model that we've implemented locally; this market doesn't exist
+yet. The providers and records are synthetic, the registry is local, and payments use internal
+credits rather than an external payment rail. `datagraph` implements the complete query
+transaction:
 
-The first thing you'd reach for is paying whoever got retrieved. That pays for showing up: a record
-that changed nothing earns what the record carrying the answer earns, and the way to earn more
-becomes publishing more rows rather than better ones.
+1. A user asks a question and puts a payment in escrow.
+2. Records are retrieved from several providers and redacted under each provider's policy.
+3. A model uses the returned records to write the answer.
+4. **The system measures how much each provider's records informed that answer.**
+5. The escrowed payment is divided in those proportions and released to the providers.
 
-The better question is what each provider was worth — take one away and see what changes. That
-works until two providers hold the same fact. Remove either and nothing changes, so both measure as
-worthless, and the shares that are left no longer add up to the payment.
+The main design problem is step 4. A provider should be paid for improving the answer, not just for
+appearing in the retrieval results.
 
-**`datagraph` divides the payment by how much each provider's data actually changed the answer, in
-shares that add up to the whole by construction rather than by being scaled to fit.**
+## How the payment is split
 
-| | Paying by retrieval | With `datagraph` |
-|---|---|---|
-| **Two providers hold the same fact** | Both look equally cited, or under leave-one-out both score zero and their share is silently reassigned | They split the credit — `195` and `203` of 1000 from the sampled engine, `197` each computed exactly |
-| **Does the payment balance** | Shares don't add up to the whole, so the gap is closed by scaling them to fit | Shares add up exactly, so the escrow is exhausted with nothing left to redistribute |
-| **Padding your dataset** | More rows returned means more payout | Payout is invariant to row count — 10 extra copies of every `delta` record leave it on `365` credits |
+Paying _per retrieved chunk_ would reward providers with larger datasets, even if their records
+weren't useful to the final answer. A provider could earn more by publishing more matching rows
+without adding new information.
 
-Leave-one-out is the alternative worth taking seriously: where providers hold disjoint data it wins
-outright, at one model call per provider instead of one per combination, and both engines rank
-providers the same way. On the demo that's 6 calls against 16 — one per provider, plus the
-reference answer and the no-records baseline that every run needs.
+_Leave-one-out_ seems like a better option. It removes one provider, generates the answer again, and
+measures what changed. This works when every provider supplies _different_ information. It fails when
+2 providers supply the same fact: removing either one changes nothing because the other still
+supplies it, so both receive a contribution score of 0.
 
-## How it works
+The demo makes that case explicit:
+
+| Provider | Sampled Shapley | Exact Shapley | Leave-one-out |
+|---|---:|---:|---:|
+| `aurora` | 243 | 241 | 287 |
+| `borealis` | 195 | 197 | 0 |
+| `cascade` | 203 | 197 | 0 |
+| `delta` | 359 | 365 | 713 |
+| **Weights sum to** | **1.0000** | **1.0000** | **0.2744** |
+
+The sampled engine pays the redundant pair `195` and `203` of 1000. The exact engine pays them
+`197` each computed exactly. Leave-one-out has only `0.2744` of a payment to allocate. Scaling its
+remaining weights to fill the escrow moves the missing share to `aurora` and `delta`, even though
+that share came from the fact supplied by `borealis` and `cascade`.
+
+We included leave-one-out to make this failure reproducible, not because it's safe for settlement.
+When selected, it produces a complete payout by normalizing the weights, and the CLI labels the
+result as inefficient. The default engine is sampled Shapley attribution.
+
+Shapley measures each provider in different provider orderings. When 2 providers hold the same fact,
+each gets credit when it appears first. Exact Shapley averages every ordering; the default engine
+estimates the same split by sampling them. The contributions in each ordering add up to the full
+payment, so the final shares do too.
+
+The tradeoff is cost. Leave-one-out needs one generation per provider, plus the full answer and the
+no-records baseline. On this demo that's 6 calls against 16. Sampled and exact Shapley both reach
+the same 16 model calls because results are cached by provider combination. For larger provider sets,
+exact enumeration grows exponentially, while the sampled engine can stop before visiting every
+combination.
+
+## How one query works
 
 ![Three panels. One: a researcher escrows 1000 credits and asks a question; five records are retrieved and redacted by policy. Two: the answer is re-generated from every combination of providers to measure what each one contributed, and adding cascade to borealis changes the score by exactly zero. Three: the shares become whole credits and the escrow settles.](docs/how-it-works.png)
 
-**Retrieve and redact.** Every field is `OPEN`, `DERIVED` (banded) or `HIDDEN`. Hidden fields never
-reach the prompt builder, and anything unlisted is hidden by default. A query with fewer than 3
-providers behind it is refused before the model runs.
+**Retrieve and redact.** The registry searches the fields that each provider allows the application
+to see. Fields marked `OPEN` pass through unchanged, `DERIVED` fields are coarsened, and `HIDDEN`
+fields are removed before the prompt gets built. Unlisted fields are hidden by default. The query is
+refused before generation unless its records come from at least 3 provider accounts. These are
+application rules, not cryptographic privacy; the raw records remain in SQLite.
 
-**Score by re-answering.** Each combination of providers is scored on how much of the answer it can
-produce alone, then cached. Retrieval caps a query at 6 providers, so sampling 2000 orderings and
-enumerating all 16 combinations cost the same 16 model calls.
+**Generate and measure.** The model first answers from all retrieved providers. The attribution
+engine then answers from subsets of those providers and compares each result with the full answer.
+The shipped scorer is token-set F1 with the similarity of the no-records answer subtracted as a
+baseline. Providers, not individual records, are the units being measured. This is why adding 10
+extra copies of every `delta` record would still leave it on `365` credits under exact Shapley.
 
-**Settle once.** Fractional shares become whole credits under a rounding rule that can't lose or
-invent one, and the ledger refuses any settlement that doesn't exhaust the escrow. A provider that
-scores below zero leaves the rest claiming more than the payment, so the query is refunded rather
-than scaled down to fit.
+**Settle or refund.** The measured shares are converted to whole credits with largest-remainder
+rounding. The double-entry ledger accepts the settlement only if its payouts exhaust the escrow. A
+provider can sometimes score below 0 when its records make the answer less similar to the full
+answer. The system doesn't turn that score into a debt or scale the positive shares down. It refunds
+the query instead.
 
 ### Architecture
 
@@ -94,64 +127,58 @@ than scaled down to fit.
 
 | # | Component | Module | What it does |
 |---|---|---|---|
-| **1** | Command line | `cli.py` | The only interface — `demo`, `compare`, `providers` |
-| **2** | Marketplace loop | `marketplace.py` | Escrow, retrieve, redact, check the cohort floor, attribute, settle |
-| **3** | Attribution | `attribution.py` | Both engines and the scoring, in one file on purpose |
-| **4** | Model | `models.py` | The `ModelClient` protocol, the Anthropic client, the offline stand-in |
-| **5** | Policy | `policy.py` | Disclosure levels, redaction, the cohort floor |
-| **6** | Registry | `registry.py` | Providers, datasets, records, retrieval — SQLite, stdlib only |
-| **7** | Money | `ledger.py`, `money.py` | Double-entry accounts with escrow; integer credits and apportionment |
+| **1** | Command line | `cli.py` | Runs the seeded demo and exposes the 3 attribution engines |
+| **2** | Query transaction | `marketplace.py` | Escrows the payment, retrieves and redacts records, measures contribution, and settles or refunds |
+| **3** | Attribution | `attribution.py` | Implements sampled Shapley, exact Shapley, leave-one-out, and answer scoring |
+| **4** | Model | `models.py` | Provides the deterministic offline model and the Anthropic API client behind one interface |
+| **5** | Disclosure policy | `policy.py` | Applies `OPEN`, `DERIVED`, and `HIDDEN` rules and enforces the cohort floor |
+| **6** | Data registry | `registry.py` | Stores providers, datasets, and records in SQLite and runs lexical retrieval |
+| **7** | Credits | `ledger.py`, `money.py` | Holds payments in escrow, converts fractional shares to integer credits, and records balanced transfers |
 
-Start with `src/datagraph/attribution.py`. It holds both engines and it's 362 lines. `SPEC.md` has
-the design notes — how the split is computed, the rejected alternatives, and every design revision
-with the test that forced it.
+Start with `src/datagraph/attribution.py`. It holds all 3 engines and it's 365 lines. `SPEC.md`
+documents the formulas, rejected alternatives, failure cases, and the tests that led to the current
+design.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `datagraph demo` | One query end to end: retrieval, redaction, the answer, payouts, ledger check |
-| `datagraph compare` | The same query under all three engines, side by side |
-| `datagraph providers` | The seeded providers and which fields each one discloses |
+| `datagraph compare` | Runs the same question under sampled Shapley, exact Shapley, and leave-one-out |
+| `datagraph demo` | Runs one query end to end and prints retrieval, redaction, answer, attribution, payout, and ledger status |
+| `datagraph providers` | Lists the seeded providers, their record counts, and the fields they disclose |
 
-`--question` and `--payment` work on `demo` and `compare`; `--engine` selects `shapley`,
-`exact_shapley`, or `leave_one_out` on `demo`. `--live` calls the real API instead of the offline
-model — on `compare` that's 3 runs, so it says what it's about to spend. `.env.example` lists
-every environment variable.
+`--question` and `--payment` work with `demo` and `compare`. `--engine` selects `shapley`,
+`exact_shapley`, or `leave_one_out` for `demo`. `--live` uses the Anthropic API instead of the
+offline model. With `compare`, that means 3 complete query runs. `.env.example` lists every
+environment variable.
 
 ## Tests
 
 ```bash
 uv sync --extra dev
-uv run pytest            # 148 tests, offline, no API key
-uv run pytest -m live    # one end-to-end test against the real API
+uv run pytest            # 150 tests, offline, no API key
+uv run pytest -m live    # one end-to-end test against the Anthropic API
 ```
 
-The engines are tested against small synthetic games whose correct answers are known in closed form,
-so the assertions check the mathematics rather than a model's mood — read `tests/test_attribution.py`
-first. `tests/test_docs.py` pins the figures on this page to the code — the payout rows, the weight
-sums, the replication and false-name examples, the model-call counts, and the line count two
-sections up — so a number that drifts out of date fails the build instead of the reader.
+The attribution tests use synthetic games with known answers. They check that the payment is fully
+allocated, identical contributors are treated identically, and a provider that changes nothing is
+paid nothing. The marketplace tests cover escrow, refunds, disclosure policies, the cohort floor,
+and negative contribution scores. Property-based tests check that credits are conserved, accounts
+don't go negative, and every escrow is settled or refunded.
+
+`tests/test_docs.py` derives the figures in this README from the implementation. A payout, weight
+sum, model-call count, replication example, or source line count that changes without a matching
+documentation update fails the test suite.
 
 ## Limitations
 
-- **It counts accounts, not people.** Extra copies of a record earn nothing, but registering twice
-  does: splitting `delta`'s 2 records across 2 accounts took its combined take
-  from `365` to `446` of 1000. Nothing here checks that two providers are different people. The fix
-  is identity or stake underneath the measurement, not a change to the scoring.
-- **Privacy is procedural, not cryptographic.** Redaction happens before the prompt is built, so no
-  prompt-side rule can leak a hidden field — but `HIDDEN` values sit in cleartext SQLite, and an
-  operator with database access reads them. Real guarantees need the raw values never to reach this
-  tier: trusted execution, secure aggregation, or differential privacy on the provider's side.
-- **The live path isn't reproducible, and its noise is paid out.** Any non-default `temperature`,
-  `top_p` or `top_k` returns a 400 and there's no `seed`. A provider's score is the gap between two
-  independently sampled answers, so wording that moved on its own is credited to whoever was in
-  that combination: the shares stay exact, but which provider earned them gets noisier. The offline
-  model is deterministic, which is why it's the default.
-
-`SPEC.md` §7 and §8 have the rest, including the two worth knowing before you trust a number: the
-contribution score is a proxy for meaning rather than a measure of it, and the ledger is
-single-process and in-memory while only the registry persists.
+- **The cost grows with the provider count.** Exact Shapley needs every provider combination. The
+  default cap is 6 providers, or 64 combinations. Sampling can reduce the work for larger sets.
+- **Live payouts are estimates.** The scorer measures token overlap, and live model responses vary.
+  The shares still total the payment, but the split can move between runs.
+- **Provider accounts aren't verified identities.** Splitting `delta`'s 2 records across 2 accounts
+  changes their combined exact-Shapley payout from `365` to `446` of 1000. Preventing this requires
+  identity controls outside the attribution layer.
 
 ## License
 

@@ -2,8 +2,8 @@
 
 ``datagraph demo`` runs the whole loop against synthetic data and shows its working: what was
 retrieved, what redaction removed, what the answer was, how much each provider contributed,
-and what they were paid. ``datagraph compare`` runs the same query under both attribution
-engines side by side, which is the fastest way to see why the choice matters.
+and what they were paid. ``datagraph compare`` runs the same query under all 3 CLI engines
+side by side, which is the fastest way to see why the choice matters.
 """
 
 from __future__ import annotations
@@ -142,7 +142,7 @@ def _report(result: QueryResult, market: Marketplace, console: Console) -> None:
             + (
                 "[green]efficient: the payment is fully accounted for.[/green]"
                 if efficient
-                else "[red]not efficient: the shortfall was redistributed by normalization.[/red]"
+                else "[red]not efficient: the weights were normalized to fit the payment.[/red]"
             )
             + "[/dim]"
         )

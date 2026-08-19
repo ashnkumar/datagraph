@@ -10,7 +10,7 @@ as a cooperative game:
   the subset ``S``, normalized so ``v(∅) = 0`` and ``v(N) = 1``,
 * the **payout** is each player's share of ``v(N)``.
 
-Two engines are implemented against that frame, and the contrast between them is the point of
+Three CLI engines are implemented against that frame, and the contrast between them is the point of
 this module.
 
 ``leave_one_out`` is the intuitive one — "how much worse is the answer without you?" — and it
@@ -22,6 +22,9 @@ removing either changes nothing, so both score zero and the money has nowhere to
 additivity. Efficiency is what makes settlement sound — the weights sum to ``v(N)`` exactly,
 so the escrow is exhausted with no normalization fudge, and redundant providers split the
 credit for the fact they jointly supply instead of both being zeroed.
+
+``exact_shapley`` computes that allocation by enumeration. ``shapley`` estimates the split by
+sampling provider orderings while preserving efficiency in every sample.
 
 Estimation follows Castro, Gómez & Tejada (2009), *Computers & Operations Research* 36(5),
 1726–1730: sample random permutations and average each player's marginal contribution. Because

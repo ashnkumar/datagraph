@@ -4,10 +4,8 @@ Every amount in this system is an integer count of **credits** (minor units). At
 produces real-valued weights; this module is the single place those weights become money, and
 the only place rounding happens.
 
-The reference implementation this project reacts to computed payouts as
-``payment_amount / row_count`` in floating point and reported the result with ``.toFixed(2)``.
-Payouts did not sum to payments, and the difference silently vanished. Nothing here uses a
-float to represent money.
+Computing payouts with floating-point division and rounding only for display can leave the
+reported payouts short of the payment. Nothing here uses a float to represent money.
 """
 
 from __future__ import annotations

@@ -221,6 +221,22 @@ def test_a_model_refusal_refunds_rather_than_charging(market):
     market.ledger.check_invariants()
 
 
+def test_zero_measured_contribution_refunds_rather_than_paying_for_retrieval(market):
+    class ConstantModel:
+        def answer(self, question, sources):
+            return "The records do not support an answer."
+
+    market.model = ConstantModel()
+    result = market.query("rachel", DEMO_QUESTION, PAYMENT)
+
+    assert result.refunded
+    assert "no contribution" in (result.refund_reason or "")
+    assert result.payouts == {}
+    assert market.balance_of("researcher", "rachel") == 100_000
+    assert market.ledger.open_escrows() == {}
+    market.ledger.check_invariants()
+
+
 def test_a_provider_scored_below_zero_refunds_instead_of_scaling_the_rest_down(market):
     """The settlement path's own version of the failure it exists to refuse.
 

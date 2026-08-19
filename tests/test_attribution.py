@@ -57,6 +57,17 @@ def fully_redundant():
     return v
 
 
+def complementary_players():
+    """Every player is required; removing any one collapses the value."""
+
+    required = {"a", "b", "c"}
+
+    def v(coalition):
+        return 1.0 if required <= set(coalition) else 0.0
+
+    return v
+
+
 # --- properties that make settlement sound -------------------------------------------------
 
 
@@ -141,6 +152,15 @@ def test_leave_one_out_collapses_entirely_when_everything_is_redundant():
     exact = exact_shapley(["a", "b"], v)
     assert exact.weights == pytest.approx({"a": 0.5, "b": 0.5})
     assert exact.is_efficient
+
+
+def test_leave_one_out_can_overshoot_on_complementary_sources():
+    """Every necessary provider claims the full value, so normalization dilutes them all."""
+    loo = leave_one_out(["a", "b", "c"], complementary_players())
+
+    assert loo.weights == pytest.approx({"a": 1.0, "b": 1.0, "c": 1.0})
+    assert loo.total_weight == pytest.approx(3.0)
+    assert not loo.is_efficient
 
 
 def test_both_engines_agree_when_contributions_are_independent():
