@@ -4,12 +4,12 @@ Attribution works by regenerating the answer from many different subsets of the 
 records, so this interface is called a lot — up to 2^n times per query before memoization.
 Everything here is shaped by that: short answers and low effort.
 
-**A note on determinism.** There is no way to ask for it. Setting ``temperature``, ``top_p``
-or ``top_k`` to any non-default value returns a 400 on this model, there is no ``seed``
-parameter, and Anthropic's migration guide notes that ``temperature = 0`` "never guaranteed
-identical outputs on prior models" either. So two calls with identical inputs may return
-different text, and that is a real source of noise in a measurement built on comparing
-regenerated answers.
+**A note on determinism.** There is no way to ask for it. This client always runs with thinking
+enabled, and ``temperature``, ``top_p`` and ``top_k`` cannot be set alongside it — any non-default
+value returns a 400. There is no ``seed`` parameter, and Anthropic's migration guide notes that
+``temperature = 0`` "never guaranteed identical outputs on prior models" either. So two calls with
+identical inputs may return different text, and that is a real source of noise in a measurement
+built on comparing regenerated answers.
 
 Two things bound it instead of pretending it away: coalition values are memoized, so each
 distinct subset is generated exactly once per query and every comparison within a query is
