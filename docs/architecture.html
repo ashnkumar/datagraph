@@ -162,8 +162,8 @@
 </div>
 
 <div class="conn"><div></div><div class="legs h9">
-  <div class="leg"><span class="glyph">&#9660;</span> one score per combination of providers</div>
-  <div class="leg"><span class="glyph">&#9650;</span> one share per provider, adding up to the whole</div>
+  <div class="leg"><span class="glyph">&#9660;</span> one cached score per provider subset visited</div>
+  <div class="leg"><span class="glyph">&#9650;</span> one weight per provider; Shapley adds up to the whole</div>
 </div></div>
 
 <!-- ============ 3+4  ATTRIBUTION / MODEL ============ -->
@@ -171,7 +171,7 @@
   <div class="gutter">Measurement</div>
   <div class="band purp">
     <div class="btitle"><div class="num n-p">3</div>
-      <div class="bt">Attribution<code>attribution.py</code><small>both engines in one file — the contrast is the point</small></div></div>
+      <div class="bt">Attribution<code>attribution.py</code><small>all 3 engines in one file — compare them side by side</small></div></div>
 
     <div class="eng">
       <div class="e def"><div class="en">shapley</div><div class="ec">Estimated by sampling, seeded. Shares still add up to the whole <i>exactly</i>, not just on average</div></div>
@@ -183,9 +183,9 @@
       <div class="card">
         <div class="clabel">Scoring — cached per combination</div>
         <div class="kv">
-          Combinations are of <b>providers</b>, not records, so a payout cannot be inflated by splitting
-          one row into several. Scores run from <span class="m">0</span> for no providers to
-          <span class="m">1</span> for all of them, with the boilerplate every answer shares subtracted out.
+          Combinations are of <b>providers</b>, not records, so duplicate rows do not create more players.
+          Retrieval suppresses exact copies. For a priced answer, scores run from <span class="m">0</span>
+          for no providers to <span class="m">1</span> for all, with shared boilerplate subtracted out.
         </div>
       </div>
       <div class="card">
